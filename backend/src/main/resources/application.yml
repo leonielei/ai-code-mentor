@@ -1,0 +1,80 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: ai-code-mentor
+  http:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+  
+  datasource:
+    url: jdbc:h2:file:./data/testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;AUTO_RECONNECT=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+  
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: true
+  
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        connection:
+          provider_disables_autocommit: false
+    defer-datasource-initialization: true
+
+  web:
+    cors:
+      allowed-origins: "http://localhost:3000,http://localhost:5173"
+      allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+      allowed-headers: "*"
+      allow-credentials: true
+
+logging:
+  level:
+    com.aicodementor: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping: TRACE
+    org.springframework.boot.autoconfigure: DEBUG
+
+# LLM Configuration
+llm:
+  # Options: ollama, localai, openai
+  provider: llamacpp
+  
+  # Ollama configuration (alternative)
+  ollama:
+    base-url: http://localhost:11434
+    model: codellama:7b-instruct
+    timeout: 300
+  
+  # llama.cpp configuration
+  llamacpp:
+    base-url: http://localhost:11435
+    # DeepSeek Coder 6.7B Q2_K - Optimized for code generation
+    # Q2_K: Smaller (~2.5GB), faster, good quality for code tasks
+    model: deepseek-coder-6.7b-instruct.Q2_K
+    timeout: 180  # Timeout for code generation (Q2_K is faster, but keep buffer)
+  
+  # Code execution settings
+  execution:
+    timeout-seconds: 10
+    max-memory-mb: 512
+
