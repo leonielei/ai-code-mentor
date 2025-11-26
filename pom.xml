@@ -10,7 +10,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.0</version>
+        <version>3.5.7</version>
         <relativePath/>
     </parent>
 
@@ -18,13 +18,16 @@
     <artifactId>ai-code-mentor-parent</artifactId>
     <version>1.0.0</version>
     <packaging>pom</packaging>
+
     <name>AI Code Mentor Parent</name>
     <description>AI-powered programming learning platform</description>
 
     <properties>
+        <!-- 你坚持要 25，因此保留为 25 -->
         <java.version>25</java.version>
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
+
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
@@ -32,20 +35,16 @@
         <node.version>v18.17.1</node.version>
         <npm.version>9.6.7</npm.version>
 
-        <!-- llama.cpp server executable (default for Windows; overridden on Unix) -->
+        <!-- llama.cpp 配置（保持你的原样） -->
         <server.executable>server.exe</server.executable>
-
         <skip.llama.download>false</skip.llama.download>
         <skip.llama.model>false</skip.llama.model>
         <skip.llama>false</skip.llama>
-
-        <!-- OS-specific skip flags (default for Windows, overridden by Unix profile) -->
         <skip.llama.server.windows>false</skip.llama.server.windows>
         <skip.llama.server.unix>true</skip.llama.server.unix>
         <skip.llama.unix.download>true</skip.llama.unix.download>
         <skip.backend.windows>false</skip.backend.windows>
         <skip.backend.unix>true</skip.backend.unix>
-
         <skip.npm.install>false</skip.npm.install>
         <skip.frontend>false</skip.frontend>
         <skip.backend>false</skip.backend>
