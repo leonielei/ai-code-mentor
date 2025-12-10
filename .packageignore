@@ -1,0 +1,50 @@
+# Files to exclude when packaging
+# These files can be regenerated or downloaded automatically
+
+# Node.js dependencies (run npm install to restore)
+node_modules/
+package-lock.json
+
+# Maven build artifacts (run mvn compile to restore)
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+
+# llama.cpp binaries and models (auto-downloaded by start scripts)
+llama-cpp/models/
+llama-cpp/*.exe
+llama-cpp/*.dll
+llama-cpp/server
+llama-cpp/*.log
+
+# Log files
+*.log
+backend/*.log
+frontend.log
+backend.log
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+temp-extract/
+
+
+
+
+
+
+
+
+

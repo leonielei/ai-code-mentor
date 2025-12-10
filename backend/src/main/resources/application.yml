@@ -1,0 +1,104 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: ai-code-mentor
+  http:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+  
+  datasource:
+    url: jdbc:h2:file:./data/testdb;AUTO_SERVER=TRUE;DB_CLOSE_ON_EXIT=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
+      connection-timeout: 30000
+      idle-timeout: 60000
+      max-lifetime: 300000
+      connection-test-query: SELECT 1
+  
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: true
+  
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        connection:
+          provider_disables_autocommit: false
+    defer-datasource-initialization: true
+
+  web:
+    cors:
+      allowed-origins: "http://localhost:3000,http://localhost:3001,http://localhost:5173"
+      allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+      allowed-headers: "*"
+      allow-credentials: true
+
+logging:
+  level:
+    com.aicodementor: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping: TRACE
+    org.springframework.boot.autoconfigure: DEBUG
+
+# LLM Configuration
+llm:
+  # Options: ollama, localai, openai
+  provider: llamacpp
+  
+  # Ollama configuration (alternative)
+  ollama:
+    base-url: http://localhost:11434
+    model: codellama:7b-instruct
+    timeout: 300
+  
+  # llama.cpp configuration
+  llamacpp:
+    base-url: http://localhost:11435
+    # Model options (download from HuggingFace):
+    # - deepseek-coder-6.7b-instruct.Q2_K (current, ~2.5GB, fast, good quality)
+    # - deepseek-coder-6.7b-instruct.Q4_K_M (better quality, ~4GB, slower)
+    # - deepseek-coder-6.7b-instruct.Q5_K_M (best quality, ~5GB, slower)
+    # - deepseek-coder-6.7b-instruct.Q8_0 (highest quality, ~7GB, slowest)
+    # Note: Higher quantization = better quality but slower and larger
+    model: deepseek-coder-6.7b-instruct.Q2_K
+    timeout: 180  # Timeout for code generation (increase to 300 for Q4/Q5 models)
+  
+  # Code execution settings
+  execution:
+    timeout-seconds: 10
+    max-memory-mb: 512
+
+# Embedding Configuration for RAG
+embedding:
+  # Options: huggingface, simple
+  provider: huggingface
+  
+  # HuggingFace Inference API (free, no API key required for public models)
+  huggingface:
+    api-url: https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2
+    api-key:  # Optional: add your HuggingFace API key for higher rate limits
+  
+  # Embedding vector dimension (384 for all-MiniLM-L6-v2)
+  dimension: 384
+

@@ -1,0 +1,66 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+.DS_Store
+dist
+*.local
+
+# Editor directories and files
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vscode
+
+# Maven
+target/
+backend/target/
+backend/backend/
+.mvn/wrapper/maven-wrapper.jar
+
+# Database files
+backend/data/*.mv.db
+backend/data/*.trace.db
+*.db
+
+# Build files
+*.class
+*.jar
+*.war
+*.ear
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# llama.cpp (large files, should be downloaded separately)
+llama-cpp/
+llama-cpp/**/*.dll
+llama-cpp/**/*.exe
+llama-cpp/**/*.so
+llama-cpp/**/*.so.*
+llama-cpp/**/*.zip
+llama-cpp/models/*.gguf
+
+# Temporary files
+texttest
+*.tmp
+*.temp
+
+# Database lock files
+backend/data/*.lock.db
