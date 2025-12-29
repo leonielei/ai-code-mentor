@@ -267,21 +267,35 @@ public class ExerciseController {
     public ResponseEntity<Page<Exercise>> getPublishedExercises(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
+        logger.info("Getting published exercises - page: {}, size: {}", page, size);
+        
         Pageable pageable = PageRequest.of(page, size);
         Page<Exercise> exercises = exerciseRepository.findByIsPublishedTrueAndCreatorNotNullOrderByCreatedAtDesc(pageable);
         
+        logger.info("Found {} published exercises (total: {})", exercises.getContent().size(), exercises.getTotalElements());
+        
         // Ensure all lazy-loaded associations are initialized
         exercises.getContent().forEach(ex -> {
-            if (ex.getCreator() != null) {
-                // Force initialization of Hibernate proxy
-                Hibernate.initialize(ex.getCreator());
-                ex.getCreator().getId();
-                ex.getCreator().getUsername();
-                ex.getCreator().getFullName();
+            try {
+                if (ex.getCreator() != null) {
+                    // Force initialization of Hibernate proxy
+                    Hibernate.initialize(ex.getCreator());
+                    ex.getCreator().getId();
+                    ex.getCreator().getUsername();
+                    ex.getCreator().getFullName();
+                }
+                logger.debug("Published exercise - ID: {}, Title: {}, Published: {}", 
+                    ex.getId(), ex.getTitle(), ex.isPublished());
+            } catch (LazyInitializationException e) {
+                logger.warn("Lazy initialization failed for exercise {} creator: {}", ex.getId(), e.getMessage());
+            } catch (RuntimeException e) {
+                logger.error("Error accessing creator for exercise {}", ex.getId(), e);
             }
         });
         
-        return ResponseEntity.ok(exercises);
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/json;charset=UTF-8")
+                .body(exercises);
     }
 }
 

@@ -48,12 +48,6 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresTeacher: true }
     },
     {
-      path: '/database',
-      name: 'database',
-      component: () => import('../views/DatabaseManager.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
       path: '/submissions',
       name: 'submissions',
       component: () => import('../views/Submissions.vue'),

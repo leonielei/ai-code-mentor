@@ -22,9 +22,6 @@
           <li class="nav-item" v-if="isLoggedIn && isTeacher">
             <router-link class="nav-link" to="/submissions">Soumissions</router-link>
           </li>
-          <li class="nav-item" v-if="isLoggedIn">
-            <router-link class="nav-link" to="/database">🗄️ DB</router-link>
-          </li>
           <li class="nav-item" v-if="!isLoggedIn">
             <router-link class="nav-link" to="/login">Connexion</router-link>
           </li>

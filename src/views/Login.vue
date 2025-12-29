@@ -89,11 +89,15 @@
           <div class="demo-card">
             <h6>Comptes de démonstration</h6>
             <div class="row">
-              <div class="col-6">
-                <small class="text-muted d-block">Enseignant</small>
+              <div class="col-4">
+                <small class="text-muted d-block">Enseignant 1</small>
                 <small class="fw-bold">teacher@demo.com</small>
               </div>
-              <div class="col-6">
+              <div class="col-4">
+                <small class="text-muted d-block">Enseignant 2</small>
+                <small class="fw-bold">teacher2@demo.com</small>
+              </div>
+              <div class="col-4">
                 <small class="text-muted d-block">Étudiant</small>
                 <small class="fw-bold">student@demo.com</small>
               </div>
@@ -163,6 +167,14 @@ export default {
               email: 'teacher@demo.com',
               role: 'TEACHER',
               name: 'Prof. Demo',
+              password: 'demo123'
+            },
+            'teacher2@demo.com': {
+              id: 3,
+              username: 'teacher2',
+              email: 'teacher2@demo.com',
+              role: 'TEACHER',
+              name: 'Prof. Test Concurrent',
               password: 'demo123'
             },
             'student@demo.com': {

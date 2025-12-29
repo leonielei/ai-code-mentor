@@ -1,6 +1,5 @@
 package com.aicodementor.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,10 +13,8 @@ public class LLMServiceConfig {
         return new RestTemplate();
     }
 
-    @Bean
-    public ObjectMapper objectMapper() {
-        return new ObjectMapper();
-    }
+    // ObjectMapper is now provided by JacksonConfig with proper LocalDateTime serialization
+    // No need to create a separate bean here
 
     @Bean
     public String llamacppBaseUrl(@Value("${llm.llamacpp.base-url:http://localhost:11435}") String baseUrl) {

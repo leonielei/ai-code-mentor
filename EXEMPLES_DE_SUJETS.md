@@ -220,3 +220,6 @@ Les deux requêtes seront traitées en parallèle grâce à l'implémentation as
 **Bon courage avec vos exercices ! 🚀**
 
 
+
+
+

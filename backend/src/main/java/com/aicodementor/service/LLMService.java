@@ -12,7 +12,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.text.Normalizer;
 import java.util.*;
+import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -24,6 +26,7 @@ public class LLMService {
 
     private static final Logger logger = LoggerFactory.getLogger(LLMService.class);
     private static final int MAX_CONCURRENT_REQUESTS = 10;
+    private static final Pattern DIACRITICS = Pattern.compile("\\p{M}+");
     
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -87,7 +90,9 @@ public class LLMService {
         requestBody.put("top_p", 0.95);
         requestBody.put("top_k", 40);
         requestBody.put("repeat_penalty", 1.15);
-        requestBody.put("stop", new String[]{"```", "\n\n\n\n", "//", "/*"});
+        // Only stop on code block markers or EOS token, not on comments or newlines
+        // This prevents premature truncation that breaks code generation
+        requestBody.put("stop", new String[]{"```", "</s>"});
         return requestBody;
     }
     
@@ -99,10 +104,24 @@ public class LLMService {
         
         try {
             JsonNode jsonNode = objectMapper.readTree(response);
-            JsonNode contentNode = jsonNode.get("content");
-            String content = (contentNode != null) ? contentNode.asText() : "";
+            String content = "";
+            
+            // Multi-field compatibility: try content, completion, or choices[0].text
+            if (jsonNode.hasNonNull("content")) {
+                content = jsonNode.get("content").asText();
+            } else if (jsonNode.hasNonNull("completion")) {
+                content = jsonNode.get("completion").asText();
+            } else if (jsonNode.has("choices") && jsonNode.get("choices").isArray() && jsonNode.get("choices").size() > 0) {
+                JsonNode c0 = jsonNode.get("choices").get(0);
+                if (c0.hasNonNull("text")) {
+                    content = c0.get("text").asText();
+                } else if (c0.hasNonNull("message") && c0.get("message").hasNonNull("content")) {
+                    content = c0.get("message").get("content").asText();
+                }
+            }
+            
             if (content.isEmpty()) {
-                logger.warn("LLM returned empty content");
+                logger.warn("LLM returned empty content. Response structure: {}", jsonNode.toPrettyString().substring(0, Math.min(500, jsonNode.toPrettyString().length())));
                 return "";
             }
             
@@ -179,7 +198,7 @@ public class LLMService {
         logger.info("Generated tests length = {}", unitTests.length());
 
         String concepts = detectConceptsFromTask(coreTask, difficulty);
-        String examples = generateExamplesFromTask(coreTask, className);
+        String examples = generateExamplesFromTask(coreTask, className, solution);
 
         return new ExerciseGenerationResponse(
             title, description, difficulty, concepts,
@@ -274,7 +293,8 @@ public class LLMService {
         }
 
         String prompt = buildSolutionPrompt(task, className);
-        String code = callLlamaAPI(prompt, 800);
+        // Increase n_predict to 1400 to prevent truncation of long solutions
+        String code = callLlamaAPI(prompt, 1400);
         code = cleanJavaSnippet(code);
         return validateAndFixSolution(code, className, task);
     }
@@ -320,6 +340,23 @@ public class LLMService {
             return retrySolutionGeneration(task, className);
         }
 
+        // Check for structural completeness - ensure class has closing brace
+        if (!code.contains("}")) {
+            logger.warn("Solution seems truncated (missing closing brace), retrying...");
+            return retrySolutionGeneration(task, className);
+        }
+        
+        // Check if method body is complete (has opening and closing braces)
+        if (code.contains("public static") && !code.contains("return ")) {
+            // If there's a method signature but no return statement, might be truncated
+            int methodCount = countOccurrences(code, "public static");
+            int returnCount = countOccurrences(code, "return ");
+            if (methodCount > returnCount && methodCount > 0) {
+                logger.warn("Solution seems incomplete (methods without return statements), retrying...");
+                return retrySolutionGeneration(task, className);
+            }
+        }
+
         if (code.contains("TODO") || code.contains("todo") || code.contains("// TODO")) {
             logger.warn("Solution contains TODO, retrying...");
             return retrySolutionGeneration(task, className);
@@ -345,10 +382,22 @@ public class LLMService {
         return code.trim();
     }
     
+    private int countOccurrences(String text, String pattern) {
+        if (text == null || pattern == null) return 0;
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(pattern, index)) != -1) {
+            count++;
+            index += pattern.length();
+        }
+        return count;
+    }
+    
     private String retrySolutionGeneration(String task, String className) {
         logger.info("Retrying solution generation with enhanced prompt...");
         String enhancedPrompt = buildEnhancedSolutionPrompt(task, className);
-        String code = callLlamaAPI(enhancedPrompt, 1000);
+        // Use same high n_predict as initial generation to prevent truncation
+        String code = callLlamaAPI(enhancedPrompt, 1400);
         code = cleanJavaSnippet(code);
         
         if (code != null && code.contains("class ") && !code.contains("TODO") 
@@ -630,23 +679,83 @@ public class LLMService {
     // 6) JUnit 5 test generation
     // ============================================================
     private String generateJUnitTests(String task, String solution, String className) {
-        if (solution == null || solution.isBlank() || solution.contains("TODO")) {
-            logger.warn("Solution is invalid, generating tests from task description");
-            return generateTestsFromTask(task, className);
-        }
+        String tests = null;
         
-        String expectedTestClassName = className + "Test";
-        String methodInfo = extractMethodInfoForTests(solution);
-        String prompt = buildTestPrompt(className, methodInfo, expectedTestClassName, task);
-        
-        String tests = callLlamaAPI(prompt, 500);
-        tests = cleanJavaTestSnippet(tests, expectedTestClassName);
+        // Try to generate from solution first
+        if (solution != null && !solution.isBlank() && !solution.contains("TODO")) {
+            String expectedTestClassName = className + "Test";
+            String methodInfo = extractMethodInfoForTests(solution);
+            String prompt = buildTestPrompt(className, methodInfo, expectedTestClassName, task);
+            
+            String rawTests = callLlamaAPI(prompt, 500);
+            tests = cleanJavaTestSnippet(rawTests, expectedTestClassName);
 
-        if (!tests.contains("@Test") || tests.contains("TODO") || !hasRealTestAssertions(tests)) {
-            logger.warn("Tests are invalid, generating from task");
-            tests = generateTestsFromTask(task, className);
+            // Validate generated tests
+            if (tests == null || tests.isBlank() || !tests.contains("@Test") 
+                || tests.contains("TODO") || !hasRealTestAssertions(tests)) {
+                logger.warn("LLM-generated tests are invalid, trying fallback");
+                tests = null; // Will use fallback
+            }
         }
+        
+        // Fallback: generate from solution code structure
+        if (tests == null || tests.isBlank()) {
+            if (solution != null && !solution.isBlank()) {
+                logger.info("Generating tests from solution structure");
+                tests = generateTestsFromSolution(solution, className);
+            } else {
+                logger.info("Generating tests from task description");
+                tests = generateTestsFromTask(task, className);
+            }
+        }
+        
+        // Final validation: ensure we have valid tests
+        if (tests == null || tests.isBlank() || !tests.contains("@Test")) {
+            logger.warn("All test generation methods failed, using minimal fallback");
+            tests = createMinimalTestFallback(className);
+        }
+        
+        // Ensure tests use correct method name from solution
+        if (solution != null && !solution.isBlank()) {
+            String actualMethodName = extractMethodNameFromSolution(solution);
+            if (actualMethodName != null && !actualMethodName.isEmpty()) {
+                tests = fixMethodNameInTests(tests, className, actualMethodName);
+            }
+        }
+        
         return tests.trim();
+    }
+    
+    private String createMinimalTestFallback(String className) {
+        return "import org.junit.jupiter.api.Test;\n"
+            + "import static org.junit.jupiter.api.Assertions.*;\n\n"
+            + "public class " + className + "Test {\n\n"
+            + "    @Test\n"
+            + "    void testCasBasique() {\n"
+            + "        // TODO: Ajoutez vos tests ici\n"
+            + "        assertTrue(true);\n"
+            + "    }\n"
+            + "}\n";
+    }
+    
+    private String fixMethodNameInTests(String tests, String className, String correctMethodName) {
+        if (tests == null || tests.isBlank() || correctMethodName == null || correctMethodName.isEmpty()) {
+            return tests;
+        }
+        
+        // Replace common incorrect method names with the correct one
+        String[] incorrectNames = {"check", "solve", "test", "calculate"};
+        String result = tests;
+        for (String incorrect : incorrectNames) {
+            if (!incorrect.equals(correctMethodName)) {
+                // Replace className.incorrectMethod( with className.correctMethodName(
+                result = result.replaceAll(
+                    className + "\\." + incorrect + "\\(",
+                    className + "." + correctMethodName + "("
+                );
+            }
+        }
+        return result;
     }
     
     private String extractMethodInfoForTests(String solution) {
@@ -680,7 +789,160 @@ public class LLMService {
         String returnType = inferReturnTypeFromTask(task);
         String paramType = inferParamTypeFromTask(task);
         
-        return buildIntelligentTests(className, methodName, returnType, paramType);
+        // Ensure we have valid values
+        if (methodName == null || methodName.isEmpty()) {
+            methodName = "solve";
+        }
+        if (returnType == null || returnType.isEmpty()) {
+            returnType = "int";
+        }
+        if (paramType == null || paramType.isEmpty()) {
+            paramType = "int[]";
+        }
+        
+        logger.info("Generating tests from task with methodName={}, returnType={}, paramType={}", 
+            methodName, returnType, paramType);
+        
+        String tests = buildIntelligentTests(className, methodName, returnType, paramType);
+        
+        // Ensure tests are valid
+        if (tests == null || tests.isBlank() || !tests.contains("@Test")) {
+            logger.warn("buildIntelligentTests returned invalid tests, using minimal fallback");
+            return createMinimalTestFallback(className);
+        }
+        
+        return tests;
+    }
+    
+    private String generateTestsFromSolution(String solution, String className) {
+        if (solution == null || solution.isBlank()) {
+            logger.warn("Solution is null or blank, using task-based generation");
+            return generateTestsFromTask(null, className);
+        }
+        
+        String methodName = extractMethodNameFromSolution(solution);
+        String returnType = extractReturnTypeFromSolution(solution);
+        String paramType = extractParamTypeFromSolution(solution);
+        
+        // Ensure we have valid values
+        if (methodName == null || methodName.isEmpty()) {
+            logger.warn("Could not extract method name from solution, using 'solve' as fallback");
+            methodName = "solve";
+        }
+        if (returnType == null || returnType.isEmpty()) {
+            logger.warn("Could not extract return type from solution, using 'int' as fallback");
+            returnType = "int";
+        }
+        if (paramType == null || paramType.isEmpty()) {
+            logger.warn("Could not extract parameter type from solution, using 'int[]' as fallback");
+            paramType = "int[]";
+        }
+        
+        logger.info("Generating tests with methodName={}, returnType={}, paramType={}", 
+            methodName, returnType, paramType);
+        
+        String tests = buildIntelligentTests(className, methodName, returnType, paramType);
+        
+        // Ensure tests are valid
+        if (tests == null || tests.isBlank() || !tests.contains("@Test")) {
+            logger.warn("buildIntelligentTests returned invalid tests, using minimal fallback");
+            return createMinimalTestFallback(className);
+        }
+        
+        return tests;
+    }
+    
+    private String extractMethodNameFromSolution(String solution) {
+        if (solution == null || solution.isBlank()) {
+            return null;
+        }
+        
+        String[] lines = solution.split("\n");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if ((trimmed.startsWith("public static") || trimmed.startsWith("private static"))
+                && trimmed.contains("(") && trimmed.contains(")")) {
+                // Extract method name: public static int methodName(...)
+                int startIdx = trimmed.indexOf("static");
+                if (startIdx >= 0) {
+                    String afterStatic = trimmed.substring(startIdx + "static".length()).trim();
+                    // Find the method name (word before the opening parenthesis)
+                    int openParen = afterStatic.indexOf('(');
+                    if (openParen > 0) {
+                        String beforeParen = afterStatic.substring(0, openParen).trim();
+                        String[] parts = beforeParen.split("\\s+");
+                        if (parts.length > 0) {
+                            return parts[parts.length - 1]; // Last word before (
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    
+    private String extractReturnTypeFromSolution(String solution) {
+        if (solution == null || solution.isBlank()) {
+            return "int";
+        }
+        
+        String[] lines = solution.split("\n");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if ((trimmed.startsWith("public static") || trimmed.startsWith("private static"))
+                && trimmed.contains("(")) {
+                // Extract return type: public static ReturnType methodName(...)
+                int staticIdx = trimmed.indexOf("static");
+                if (staticIdx >= 0) {
+                    String afterStatic = trimmed.substring(staticIdx + "static".length()).trim();
+                    int openParen = afterStatic.indexOf('(');
+                    if (openParen > 0) {
+                        String beforeParen = afterStatic.substring(0, openParen).trim();
+                        String[] parts = beforeParen.split("\\s+");
+                        if (parts.length >= 2) {
+                            return parts[0]; // Return type is before method name
+                        } else if (parts.length == 1) {
+                            return "void";
+                        }
+                    }
+                }
+            }
+        }
+        return "int";
+    }
+    
+    private String extractParamTypeFromSolution(String solution) {
+        if (solution == null || solution.isBlank()) {
+            return "int[]";
+        }
+        
+        String[] lines = solution.split("\n");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if ((trimmed.startsWith("public static") || trimmed.startsWith("private static"))
+                && trimmed.contains("(") && trimmed.contains(")")) {
+                // Extract parameter type from method signature
+                int openParen = trimmed.indexOf('(');
+                int closeParen = trimmed.indexOf(')');
+                if (openParen > 0 && closeParen > openParen) {
+                    String params = trimmed.substring(openParen + 1, closeParen).trim();
+                    if (params.isEmpty()) {
+                        return "int[]";
+                    }
+                    // Extract first parameter type
+                    String[] paramParts = params.split("\\s+");
+                    if (paramParts.length > 0) {
+                        String paramType = paramParts[0];
+                        // Handle array types like int[]
+                        if (params.contains("[]")) {
+                            return paramType + "[]";
+                        }
+                        return paramType;
+                    }
+                }
+            }
+        }
+        return "int[]";
     }
     
     private String inferMethodNameFromTask(String task) {
@@ -719,11 +981,24 @@ public class LLMService {
             tests.append("        int[] array = {1, 2, 3, 4, 5};\n");
             if ("int".equals(returnType)) {
                 tests.append("        assertEquals(15, ").append(className).append(".").append(methodName).append("(array));\n");
+            } else if ("boolean".equals(returnType)) {
+                tests.append("        assertTrue(").append(className).append(".").append(methodName).append("(array));\n");
+            } else if ("String".equals(returnType)) {
+                tests.append("        assertNotNull(").append(className).append(".").append(methodName).append("(array));\n");
             }
         } else if ("String".equals(paramType)) {
             tests.append("        String input = \"hello\";\n");
             if ("String".equals(returnType)) {
                 tests.append("        assertEquals(\"olleh\", ").append(className).append(".").append(methodName).append("(input));\n");
+            } else if ("boolean".equals(returnType)) {
+                tests.append("        assertTrue(").append(className).append(".").append(methodName).append("(input));\n");
+            } else if ("int".equals(returnType)) {
+                tests.append("        assertEquals(5, ").append(className).append(".").append(methodName).append("(input));\n");
+            }
+        } else if ("int".equals(paramType)) {
+            tests.append("        int input = 42;\n");
+            if ("int".equals(returnType)) {
+                tests.append("        assertEquals(42, ").append(className).append(".").append(methodName).append("(input));\n");
             } else if ("boolean".equals(returnType)) {
                 tests.append("        assertTrue(").append(className).append(".").append(methodName).append("(input));\n");
             }
@@ -734,12 +1009,23 @@ public class LLMService {
         tests.append("    void testCasLimite() {\n");
         if ("int[]".equals(paramType)) {
             tests.append("        int[] empty = {};\n");
-            tests.append("        assertEquals(0, ").append(className).append(".").append(methodName).append("(empty));\n");
-            tests.append("        assertEquals(0, ").append(className).append(".").append(methodName).append("(null));\n");
+            if ("int".equals(returnType)) {
+                tests.append("        assertEquals(0, ").append(className).append(".").append(methodName).append("(empty));\n");
+                tests.append("        assertEquals(0, ").append(className).append(".").append(methodName).append("(null));\n");
+            } else if ("boolean".equals(returnType)) {
+                tests.append("        assertFalse(").append(className).append(".").append(methodName).append("(empty));\n");
+                tests.append("        assertFalse(").append(className).append(".").append(methodName).append("(null));\n");
+            }
         } else if ("String".equals(paramType)) {
-            tests.append("        assertEquals(\"\", ").append(className).append(".").append(methodName).append("(\"\"));\n");
             if ("String".equals(returnType)) {
-                tests.append("        assertEquals(null, ").append(className).append(".").append(methodName).append("(null));\n");
+                tests.append("        assertEquals(\"\", ").append(className).append(".").append(methodName).append("(\"\"));\n");
+                tests.append("        assertNull(").append(className).append(".").append(methodName).append("(null));\n");
+            } else if ("boolean".equals(returnType)) {
+                tests.append("        assertFalse(").append(className).append(".").append(methodName).append("(\"\"));\n");
+                tests.append("        assertFalse(").append(className).append(".").append(methodName).append("(null));\n");
+            } else if ("int".equals(returnType)) {
+                tests.append("        assertEquals(0, ").append(className).append(".").append(methodName).append("(\"\"));\n");
+                tests.append("        assertEquals(0, ").append(className).append(".").append(methodName).append("(null));\n");
             }
         }
         tests.append("    }\n\n");
@@ -750,11 +1036,24 @@ public class LLMService {
             tests.append("        int[] array = {10, 20, 30, 40, 50};\n");
             if ("int".equals(returnType)) {
                 tests.append("        assertEquals(150, ").append(className).append(".").append(methodName).append("(array));\n");
+            } else if ("boolean".equals(returnType)) {
+                tests.append("        assertTrue(").append(className).append(".").append(methodName).append("(array));\n");
             }
         } else if ("String".equals(paramType)) {
             tests.append("        String input = \"hello world\";\n");
             if ("String".equals(returnType)) {
                 tests.append("        assertEquals(\"dlrow olleh\", ").append(className).append(".").append(methodName).append("(input));\n");
+            } else if ("boolean".equals(returnType)) {
+                tests.append("        assertTrue(").append(className).append(".").append(methodName).append("(input));\n");
+            } else if ("int".equals(returnType)) {
+                tests.append("        assertEquals(11, ").append(className).append(".").append(methodName).append("(input));\n");
+            }
+        } else if ("int".equals(paramType)) {
+            tests.append("        int input = 100;\n");
+            if ("int".equals(returnType)) {
+                tests.append("        assertEquals(100, ").append(className).append(".").append(methodName).append("(input));\n");
+            } else if ("boolean".equals(returnType)) {
+                tests.append("        assertTrue(").append(className).append(".").append(methodName).append("(input));\n");
             }
         }
         tests.append("    }\n");
@@ -764,11 +1063,20 @@ public class LLMService {
     }
     
     private String buildTestPrompt(String className, String codeToTest, String expectedTestClassName, String task) {
+        // Extract method name from codeToTest to ensure correct usage
+        String methodName = extractMethodNameFromSignature(codeToTest);
+        String methodNameHint = methodName != null && !methodName.isEmpty() 
+            ? " (nom de méthode EXACT : " + methodName + ")" 
+            : "";
+        
         return "URGENT: Génère des tests JUnit 5 COMPLETS avec des ASSERTIONS RÉELLES. PAS de TODO.\n\n"
             + "=== EXERCICE ===\n" + (task != null ? task : "") + "\n\n"
             + "=== CLASSE À TESTER ===\n"
             + "Classe : " + className + "\n"
-            + "Méthode(s) :\n" + codeToTest + "\n\n"
+            + "Méthode(s) :\n" + codeToTest + "\n"
+            + (methodName != null && !methodName.isEmpty() 
+                ? "Nom de méthode à utiliser : " + methodName + "\n" 
+                : "") + "\n"
             + "=== EXIGENCES ABSOLUES ===\n"
             + "1. Nom de classe de test EXACT : " + expectedTestClassName + "\n"
             + "2. Imports OBLIGATOIRES :\n"
@@ -778,49 +1086,168 @@ public class LLMService {
             + "   - testCasBasique() : valeurs normales avec assertEquals concret\n"
             + "   - testCasLimite() : null, tableaux vides, chaînes vides avec assertions\n"
             + "   - testCasComplexe() : cas multiples avec assertions\n"
-            + "4. Chaque test DOIT appeler " + className + ".méthode(...) et vérifier avec assertEquals/assertTrue\n"
-            + "5. INTERDICTION ABSOLUE : PAS de TODO, PAS de code vide\n"
-            + "6. PAS de markdown, UNIQUEMENT du code de test fonctionnel\n\n"
+            + "4. Chaque test DOIT appeler " + className + "." 
+            + (methodName != null && !methodName.isEmpty() ? methodName : "méthode") 
+            + "(...) et vérifier avec assertEquals/assertTrue/assertFalse\n"
+            + "5. Utilise EXACTEMENT le nom de méthode de la signature ci-dessus" + methodNameHint + "\n"
+            + "6. INTERDICTION ABSOLUE : PAS de TODO, PAS de code vide\n"
+            + "7. PAS de markdown, UNIQUEMENT du code de test fonctionnel\n\n"
             + "=== EXEMPLE CONCRET ===\n"
-            + "Si méthode = sum(int[] array) :\n"
+            + "Si méthode = " + (methodName != null && !methodName.isEmpty() ? methodName : "sum") + "(int[] array) :\n"
             + "@Test\n"
             + "void testCasBasique() {\n"
             + "    int[] array = {1, 2, 3};\n"
-            + "    assertEquals(6, " + className + ".sum(array));\n"
+            + "    assertEquals(6, " + className + "." 
+            + (methodName != null && !methodName.isEmpty() ? methodName : "sum") + "(array));\n"
             + "}\n\n"
             + "@Test\n"
             + "void testCasLimite() {\n"
-            + "    assertEquals(0, " + className + ".sum(new int[]{}));\n"
-            + "    assertEquals(0, " + className + ".sum(null));\n"
+            + "    assertEquals(0, " + className + "." 
+            + (methodName != null && !methodName.isEmpty() ? methodName : "sum") + "(new int[]{}));\n"
+            + "    assertEquals(0, " + className + "." 
+            + (methodName != null && !methodName.isEmpty() ? methodName : "sum") + "(null));\n"
             + "}\n\n"
             + "=== FORMAT ===\n"
             + "Commence par 'import org.junit.jupiter.api.Test;'\n"
-            + "Génère des tests COMPLETS avec assertions RÉELLES pour : " + (task != null ? task : className) + "\n\n"
+            + "Génère des tests COMPLETS avec assertions RÉELLES pour : " + (task != null ? task : className) + "\n"
+            + "Utilise le nom de méthode EXACT de la signature fournie.\n\n"
             + "Code des tests :";
+    }
+    
+    private String extractMethodNameFromSignature(String signature) {
+        if (signature == null || signature.isBlank()) {
+            return null;
+        }
+        
+        // Look for method name pattern: returnType methodName(...)
+        String[] lines = signature.split("\n");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if ((trimmed.startsWith("public static") || trimmed.startsWith("private static"))
+                && trimmed.contains("(") && trimmed.contains(")")) {
+                int openParen = trimmed.indexOf('(');
+                if (openParen > 0) {
+                    String beforeParen = trimmed.substring(0, openParen).trim();
+                    String[] parts = beforeParen.split("\\s+");
+                    if (parts.length >= 2) {
+                        return parts[parts.length - 1]; // Last word before (
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     // ============================================================
     // 7) Hint generation
     // ============================================================
+    /**
+     * Generates a hint for a failed test (overload without problem statement).
+     */
     public String generateHint(String testName, String testCode,
                                String studentCode, String errorMessage) {
         return generateHint(testName, testCode, studentCode, errorMessage, null);
     }
-    
+
+    /**
+     * Main hint generator.
+     * Key improvements:
+     * - Only sends the relevant student class + (optionally) the most relevant method body.
+     * - Forces the LLM to output STRICT JSON on a single line.
+     * - Parses JSON and rebuilds a clean human-readable hint (keeps newlines for code snippet).
+     * - Avoids collapsing whitespace (which previously made hints unreadable).
+     */
     public String generateHint(String testName, String testCode,
                                String studentCode, String errorMessage, String problemStatement) {
         logger.info("Generating hint for failed test: {}", testName);
 
-        String testExpectation = extractTestExpectation(testCode);
+        // Build a strong context for the LLM (but keep it short)
         String exerciseContext = buildExerciseContext(problemStatement);
-        String logicIssue = analyzeStudentCode(studentCode);
-        String prompt = buildHintPrompt(testName, testCode, studentCode, 
-                                       errorMessage, testExpectation, 
-                                       exerciseContext, logicIssue);
 
-        String hint = callLlamaAPI(prompt, 300);
-        hint = postProcessHint(hint, errorMessage);
-        return hint.trim();
+        // Extract likely method name from the test (ClassName.methodName(...))
+        String targetMethod = extractMethodNameFromTest(testCode);
+
+        // Keep only the relevant student code: first class + optionally the target method body
+        String sanitizedStudentCode = sanitizeStudentCodeForHint(studentCode);
+        String focusedStudentCode = focusStudentCodeOnMethod(sanitizedStudentCode, targetMethod);
+
+        // Build prompt with strict JSON output contract
+        String prompt = buildHintPromptJson(
+            testName,
+            testCode,
+            focusedStudentCode,
+            errorMessage,
+            exerciseContext,
+            targetMethod
+        );
+
+        // Call LLM with retry (but accept only valid JSON)
+        String raw = generateHintWithRetryJson(prompt, 2);
+
+        // Convert JSON -> clean hint text
+        String hint = postProcessHintJson(raw);
+
+        // Fallback if JSON is missing/invalid
+        if (hint != null && hint.trim().length() >= 10) {
+            return hint.trim();
+        }
+        return getDefaultHint(errorMessage);
+    }
+    
+    /**
+     * Calls LLM and returns the raw response ONLY if it contains a valid JSON object.
+     * Otherwise retries up to maxRetries times.
+     */
+    private String generateHintWithRetryJson(String prompt, int maxRetries) {
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            String raw = callLlamaAPIForHintJson(prompt, 320); // Lower token budget keeps it short
+            if (raw != null && !raw.isBlank()) {
+                String json = extractFirstJsonObject(raw);
+                if (json != null) {
+                    logger.info("Hint JSON extracted on attempt {}: {}",
+                        attempt + 1, json.length() > 200 ? json.substring(0, 200) + "..." : json);
+                    return json;
+                }
+            }
+            logger.warn("Hint JSON not found on attempt {}", attempt + 1);
+        }
+        return "";
+    }
+
+    /**
+     * LLM call for hint generation (JSON-only).
+     * Important changes:
+     * - Uses stop tokens that prevent long rambling.
+     * - Keeps temperature moderate.
+     */
+    private String callLlamaAPIForHintJson(String prompt, int maxTokens) {
+        try {
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("prompt", prompt);
+            requestBody.put("n_predict", maxTokens);
+            requestBody.put("temperature", 0.25);
+            requestBody.put("top_p", 0.9);
+            requestBody.put("top_k", 40);
+            requestBody.put("repeat_penalty", 1.12);
+
+            // Stop early when it starts adding separators or extra text.
+            // IMPORTANT: we do NOT stop on "===" in the prompt because we no longer need "===" in the output.
+            requestBody.put("stop", new String[]{"\n\n", "```", "</s>", "=== "});
+
+            HttpHeaders headers = createHeaders();
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
+
+            String response = restTemplate.postForObject(
+                llamacppBaseUrl + "/completion",
+                request,
+                String.class
+            );
+
+            return processResponse(response);
+        } catch (Exception e) {
+            logger.error("Error calling LLM for hint generation (JSON)", e);
+            return "";
+        }
     }
     
     private String extractTestExpectation(String testCode) {
@@ -868,59 +1295,138 @@ public class LLMService {
             || trimmed.equals("return null;");
     }
     
-    private String buildHintPrompt(String testName, String testCode, String studentCode,
-                                   String errorMessage, String testExpectation,
-                                   String exerciseContext, String logicIssue) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("Tu es un professeur de programmation Java. Analyse le code de l'étudiant et donne un indice LOGIQUE et ACTIONNABLE.\n\n");
-        prompt.append("=== EXERCICE ===\n").append(exerciseContext).append("\n\n");
-        prompt.append("=== CODE DE L'ÉTUDIANT ===\n").append(studentCode != null ? studentCode : "").append("\n\n");
-        prompt.append("=== PROBLÈME ===\n");
-        prompt.append("Test: ").append(testName).append("\n");
-        prompt.append("Erreur: ").append(errorMessage != null && !errorMessage.isEmpty() ? errorMessage : "Le test échoue").append("\n");
-        if (!testExpectation.isEmpty()) {
-            prompt.append("Attendu: ").append(testExpectation).append("\n");
-        }
-        if (!logicIssue.isEmpty()) {
-            prompt.append("Problème détecté: ").append(logicIssue).append("\n");
-        }
-        prompt.append("\n");
-        if (testCode != null && !testCode.isEmpty()) {
-            prompt.append("=== TEST (pour comprendre ce qui est attendu) ===\n");
-            prompt.append(testCode.substring(0, Math.min(testCode.length(), 600))).append("\n\n");
-        }
-        prompt.append(buildHintInstructions());
-        return prompt.toString();
+    /**
+     * Builds a JSON-only prompt that prevents messy "essay" outputs.
+     */
+    private String buildHintPromptJson(String testName,
+                                      String testCode,
+                                      String focusedStudentCode,
+                                      String errorMessage,
+                                      String exerciseContext,
+                                      String targetMethodName) {
+
+        String shortTest = trimToMax(testCode, 450);  // Keep it short to avoid confusion
+        String err = (errorMessage == null || errorMessage.isBlank()) ? "Test failed" : errorMessage;
+
+        String methodLine = (targetMethodName == null || targetMethodName.isBlank())
+            ? ""
+            : "Target method name: " + targetMethodName + "\n";
+
+        return ""
+            + "You are a Java programming teacher.\n"
+            + "Your job: give a short, actionable hint.\n\n"
+            + "CONTEXT (exercise):\n"
+            + exerciseContext + "\n\n"
+            + "FAILURE:\n"
+            + "Test name: " + safeOneLine(testName) + "\n"
+            + "Error: " + safeOneLine(err) + "\n"
+            + methodLine + "\n"
+            + "STUDENT CODE (only relevant parts):\n"
+            + focusedStudentCode + "\n\n"
+            + "TEST (for expected behavior, truncated):\n"
+            + shortTest + "\n\n"
+            + "STRICT OUTPUT RULES:\n"
+            + "Return ONLY ONE JSON object on ONE line. No extra text.\n"
+            + "Format exactly:\n"
+            + "{\"problem\":\"...\",\"fix\":\"...\",\"snippet\":\"...\"}\n"
+            + "Rules:\n"
+            + "- problem: 1 sentence, the precise mistake.\n"
+            + "- fix: 1 sentence, what to change.\n"
+            + "- snippet: either empty string \"\" or a tiny Java snippet (max 3 lines).\n"
+            + "- NEVER include package/import/Spring/JPA/annotations.\n"
+            + "- NEVER mention other classes/files.\n"
+            + "- Do not use markdown.\n\n"
+            + "JSON:";
     }
     
-    private String buildHintInstructions() {
-        return "=== INSTRUCTIONS STRICTES ===\n"
-            + "1. Analyse la LOGIQUE du code: que fait-il actuellement vs ce qu'il devrait faire?\n"
-            + "2. Identifie le PROBLÈME SPÉCIFIQUE (pas juste 'ça ne marche pas')\n"
-            + "3. Donne un indice CONCRET sur COMMENT corriger (quelle approche, quelle structure)\n"
-            + "4. Sois PRÉCIS: mentionne les variables, les boucles, les conditions si pertinent\n"
-            + "5. INTERDICTION ABSOLUE: Ne JAMAIS inclure de code Java, ni de snippets, ni d'exemples de code\n"
-            + "6. Utilise uniquement des descriptions textuelles et des explications conceptuelles\n"
-            + "7. Si tu mentionnes une méthode ou une syntaxe, décris-la avec des mots, pas avec du code\n\n"
-            + "=== FORMAT ===\n"
-            + "Réponds en 2-3 phrases maximum, directement et sans préambule.\n"
-            + "Exemple CORRECT: 'Tu retournes une chaîne vide. Pour inverser une chaîne, parcours-la de la fin (index length()-1) vers le début (index 0) et construis la nouvelle chaîne caractère par caractère.'\n"
-            + "Exemple INCORRECT (à éviter): 'Utilise: return new StringBuilder(str).reverse().toString();'\n\n"
-            + "=== RAPPEL FINAL ===\n"
-            + "AUCUN CODE JAVA. Seulement des explications textuelles et des conseils conceptuels.\n\n"
-            + "Indice:";
+    /**
+     * Converts the JSON object into a clean hint.
+     * Keeps snippet formatting (newlines) intact.
+     */
+    private String postProcessHintJson(String json) {
+        if (json == null || json.isBlank()) return null;
+
+        try {
+            JsonNode node = objectMapper.readTree(json);
+
+            String problem = safeText(node, "problem");
+            String fix = safeText(node, "fix");
+            String snippet = safeText(node, "snippet");
+
+            // Safety: reject if it looks like project/framework leakage
+            if (looksLikeProjectLeak(problem) || looksLikeProjectLeak(fix) || looksLikeProjectLeak(snippet)) {
+                logger.error("Hint rejected: looks like project/framework leak. json={}", trimToMax(json, 220));
+                return null;
+            }
+
+            StringBuilder sb = new StringBuilder();
+
+            // Build a short, clean hint
+            if (!problem.isBlank()) sb.append(problem.trim());
+            if (!fix.isBlank()) {
+                if (sb.length() > 0) sb.append(" ");
+                sb.append(fix.trim());
+            }
+
+            // Add snippet on new lines if present
+            if (!snippet.isBlank()) {
+                String cleanedSnippet = cleanSnippet(snippet);
+                if (!cleanedSnippet.isBlank()) {
+                    sb.append("\n").append(cleanedSnippet);
+                }
+            }
+
+            String result = sb.toString().trim();
+            return result.isBlank() ? null : result;
+        } catch (Exception e) {
+            logger.warn("Failed to parse hint JSON: {}", e.getMessage());
+            return null;
+        }
     }
     
-    private String postProcessHint(String hint, String errorMessage) {
-        if (hint != null && !hint.trim().isEmpty()) {
-            hint = removeCodeFromHint(hint);
+    /**
+     * Sanitize student code to only include the relevant class, not the entire project.
+     * This prevents LLM from seeing and repeating entire Spring Boot project files.
+     * Supports both "public class" and "class" declarations.
+     */
+    private String sanitizeStudentCodeForHint(String studentCode) {
+        if (studentCode == null || studentCode.isBlank()) {
+            return "";
         }
         
-        if (hint == null || hint.trim().length() < 20) {
-            return getDefaultHint(errorMessage);
+        // Try to find first class declaration (public or non-public)
+        int publicIdx = studentCode.indexOf("public class ");
+        int classIdx = studentCode.indexOf("class ");
+        
+        int idx = -1;
+        if (publicIdx >= 0 && (classIdx < 0 || publicIdx < classIdx)) {
+            idx = publicIdx;
+        } else if (classIdx >= 0) {
+            idx = classIdx;
         }
-        return hint;
+        
+        if (idx >= 0) {
+            studentCode = studentCode.substring(idx);
+            // Find the end of this class (next "class " or end of string)
+            int nextClassIdx = studentCode.indexOf("\nclass ", 1);
+            if (nextClassIdx < 0) {
+                nextClassIdx = studentCode.indexOf("\npublic class ", 1);
+            }
+            if (nextClassIdx > 0) {
+                studentCode = studentCode.substring(0, nextClassIdx);
+            }
+        }
+        
+        // Prevent extremely long context from polluting LLM
+        // If student code is too long, it's likely the entire project
+        if (studentCode.length() > 2000) {
+            logger.warn("Student code too long ({} chars), truncating to 2000 chars", studentCode.length());
+            studentCode = studentCode.substring(0, 2000) + "\n// ... (code truncated)";
+        }
+        
+        return studentCode.trim();
     }
+    
     
     private String getDefaultHint(String errorMessage) {
         if (errorMessage == null) {
@@ -931,13 +1437,17 @@ public class LLMService {
     
     private enum HintStrategy {
         NULL_POINTER(msg -> msg.contains("NullPointerException"),
-            "Il semble y avoir une NullPointerException. Vérifie que tous les objets sont initialisés avant d'être utilisés, et que les méthodes ne retournent pas null."),
+            "NullPointerException détectée. Vérifie que l'objet n'est pas null avant utilisation: if (obj == null) return ...; ou if (obj != null) { ... }"),
         ARRAY_INDEX(msg -> msg.contains("ArrayIndexOutOfBoundsException"),
-            "Il y a une erreur d'index de tableau. Vérifie que les indices utilisés sont valides (entre 0 et la longueur du tableau - 1)."),
+            "Index de tableau invalide. Utilise des indices entre 0 et array.length-1. Vérifie: if (i >= 0 && i < array.length) avant d'accéder à array[i]"),
         STRING_INDEX(msg -> msg.contains("StringIndexOutOfBoundsException"),
-            "Il y a une erreur d'index de chaîne. Vérifie que les indices utilisés pour accéder aux caractères sont valides."),
+            "Index de chaîne invalide. Utilise des indices entre 0 et str.length()-1. Vérifie: if (i >= 0 && i < str.length()) avant d'accéder à str.charAt(i)"),
+        COMPILATION_ERROR(msg -> msg.contains("cannot find symbol") || msg.contains("cannot resolve"),
+            "Erreur de compilation: symbole introuvable. Vérifie l'orthographe des variables et méthodes, et que toutes les classes sont importées correctement."),
+        TYPE_MISMATCH(msg -> msg.contains("incompatible types") || msg.contains("type mismatch"),
+            "Incompatibilité de types. Vérifie que les types correspondent: int avec int, String avec String, etc."),
         DEFAULT(msg -> true,
-            "Vérifie attentivement ta logique. Assure-toi que :\n1. Toutes les variables sont correctement initialisées\n2. Les conditions et boucles sont correctement écrites\n3. Les valeurs retournées correspondent à ce qui est attendu par le test");
+            "Vérifie que ton code implémente correctement la logique attendue. Compare le résultat retourné avec ce que le test attend.");
         
         private final java.util.function.Predicate<String> matcher;
         private final String hint;
@@ -959,68 +1469,6 @@ public class LLMService {
         String getHint() {
             return hint;
         }
-    }
-    
-    private String removeCodeFromHint(String hint) {
-        if (hint == null || hint.isEmpty()) {
-            return hint;
-        }
-        
-        String cleaned = removeCodeBlocks(hint);
-        cleaned = filterCodeLines(cleaned);
-        cleaned = removeCodePatterns(cleaned);
-        cleaned = cleanupWhitespace(cleaned);
-        
-        if (cleaned.length() < 30 && hint.length() > 50) {
-            return fallbackCleanHint(hint);
-        }
-        
-        return cleaned.trim();
-    }
-    
-    private String removeCodeBlocks(String hint) {
-        String cleaned = hint.replaceAll("```[\\s\\S]*?```", "");
-        cleaned = cleaned.replaceAll("`([^`]{20,})`", "$1");
-        return cleaned;
-    }
-    
-    private String filterCodeLines(String cleaned) {
-        String[] lines = cleaned.split("\n");
-        StringBuilder result = new StringBuilder();
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (!isCodeLine(trimmed)) {
-                result.append(line).append("\n");
-            }
-        }
-        return result.toString();
-    }
-    
-    private boolean isCodeLine(String trimmed) {
-        return (trimmed.contains("public ") && trimmed.contains("("))
-            || (trimmed.contains("private ") && trimmed.contains("("))
-            || (trimmed.contains("return ") && trimmed.contains(";"))
-            || (trimmed.contains("=") && trimmed.contains(";") && trimmed.length() > 30)
-            || trimmed.startsWith("import ")
-            || trimmed.startsWith("package ")
-            || (trimmed.matches(".*\\{[^}]*\\}.*") && trimmed.length() > 50);
-    }
-    
-    private String removeCodePatterns(String cleaned) {
-        cleaned = cleaned.replaceAll("public\\s+\\w+\\s+\\w+\\s*\\([^)]*\\)\\s*\\{[^}]*\\}", "");
-        cleaned = cleaned.replaceAll("return\\s+[^;]+;", "");
-        return cleaned;
-    }
-    
-    private String cleanupWhitespace(String cleaned) {
-        cleaned = cleaned.replaceAll("\\n\\s*\\n\\s*\\n", "\n\n");
-        return cleaned.trim();
-    }
-    
-    private String fallbackCleanHint(String hint) {
-        String cleaned = hint.replaceAll("```[\\s\\S]*?```", "");
-        cleaned = cleaned.replaceAll("`([^`]+)`", "$1");
-        return cleaned;
     }
     
     private String extractMethodBody(String code) {
@@ -1053,6 +1501,185 @@ public class LLMService {
         
         return null;
     }
+    
+    // ============================================================
+    // Helper methods for JSON-based hint generation
+    // ============================================================
+    
+    /**
+     * Extracts a likely method name from test code: looks for "X.yyyy(" patterns.
+     * Returns null if not found.
+     */
+    private String extractMethodNameFromTest(String testCode) {
+        if (testCode == null || testCode.isBlank()) return null;
+
+        // Example: assertEquals(6, ArraySum.sum(array));
+        Pattern p = Pattern.compile("\\b\\w+\\.(\\w+)\\s*\\(");
+        Matcher m = p.matcher(testCode);
+        if (m.find()) {
+            String name = m.group(1);
+            // Filter out obvious non-targets
+            if (!"assertEquals".equals(name) && !"assertTrue".equals(name) && !"assertFalse".equals(name)) {
+                return name;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Keeps only:
+     * - the class header
+     * - the target method body if found
+     * - closes the class brace
+     *
+     * If target method name is null or not found, returns the original sanitized code.
+     */
+    private String focusStudentCodeOnMethod(String sanitizedStudentCode, String targetMethodName) {
+        if (sanitizedStudentCode == null || sanitizedStudentCode.isBlank()) return "";
+        if (targetMethodName == null || targetMethodName.isBlank()) return sanitizedStudentCode;
+
+        // Try to extract method block: "targetMethodName(...){ ... }"
+        String methodBlock = extractMethodBlock(sanitizedStudentCode, targetMethodName);
+        if (methodBlock == null || methodBlock.isBlank()) {
+            return sanitizedStudentCode; // fallback: keep full class
+        }
+
+        // Extract class declaration line
+        int classIdx = sanitizedStudentCode.indexOf("class ");
+        if (classIdx < 0) return sanitizedStudentCode;
+
+        int classBraceIdx = sanitizedStudentCode.indexOf("{", classIdx);
+        if (classBraceIdx < 0) return sanitizedStudentCode;
+
+        String classHeader = sanitizedStudentCode.substring(classIdx, classBraceIdx + 1).trim();
+
+        // Build focused class: header + method block + closing brace
+        return classHeader + "\n" + methodBlock.trim() + "\n}";
+    }
+
+    /**
+     * Extracts the full method block including braces for a given method name.
+     * Works for "public static", "private static", and regular methods.
+     */
+    private String extractMethodBlock(String code, String methodName) {
+        if (code == null || methodName == null) return null;
+
+        // Find the method signature line containing " methodName("
+        int sigIdx = indexOfMethodSignature(code, methodName);
+        if (sigIdx < 0) return null;
+
+        // Find the opening brace '{' of the method
+        int openBraceIdx = code.indexOf("{", sigIdx);
+        if (openBraceIdx < 0) return null;
+
+        // Walk until matching closing brace
+        int depth = 0;
+        for (int i = openBraceIdx; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+            if (depth == 0) {
+                return code.substring(sigIdx, i + 1);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds an index where a method signature likely starts.
+     */
+    private int indexOfMethodSignature(String code, String methodName) {
+        // Simple robust approach: search for " methodName(" with boundaries
+        Pattern p = Pattern.compile("(?m)^\\s*(public|private|protected)?\\s*(static\\s+)?[\\w<>\\[\\]]+\\s+"
+            + Pattern.quote(methodName) + "\\s*\\(");
+        Matcher m = p.matcher(code);
+        return m.find() ? m.start() : -1;
+    }
+
+    /**
+     * Extracts the first JSON object {...} from a response.
+     * This tolerates minor extra text around it.
+     */
+    private String extractFirstJsonObject(String text) {
+        if (text == null || text.isBlank()) return null;
+
+        // Find the first '{' and then parse brace depth until it closes
+        int start = text.indexOf('{');
+        if (start < 0) return null;
+
+        int depth = 0;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+            if (depth == 0) {
+                return text.substring(start, i + 1).trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reads a field from JSON safely.
+     */
+    private String safeText(JsonNode node, String field) {
+        if (node == null || field == null) return "";
+        JsonNode v = node.get(field);
+        return (v == null || v.isNull()) ? "" : v.asText("");
+    }
+
+    /**
+     * Prevents multi-line injection in log/prompt fields.
+     */
+    private String safeOneLine(String s) {
+        if (s == null) return "";
+        return s.replaceAll("[\\r\\n]+", " ").trim();
+    }
+
+    /**
+     * Trims text to max length.
+     */
+    private String trimToMax(String s, int max) {
+        if (s == null) return "";
+        if (s.length() <= max) return s;
+        return s.substring(0, max) + "...";
+    }
+
+    /**
+     * Cleans snippet while preserving newlines (max 3 lines recommended by prompt).
+     * Also removes markdown fences if the LLM accidentally included them.
+     */
+    private String cleanSnippet(String snippet) {
+        if (snippet == null) return "";
+        String s = snippet.trim();
+        s = s.replaceAll("(?i)```[a-zA-Z]*", "");
+        s = s.replaceAll("```", "");
+        // Keep at most 3 lines to match the contract
+        String[] lines = s.split("\\R");
+        if (lines.length <= 3) return s;
+        return String.join("\n", Arrays.copyOf(lines, 3)).trim();
+    }
+
+    /**
+     * Detects obvious project/framework leakage in hint fields.
+     * This is intentionally strict because hints should not contain Spring/JPA.
+     */
+    private boolean looksLikeProjectLeak(String text) {
+        if (text == null || text.isBlank()) return false;
+        String t = text.toLowerCase(Locale.ROOT);
+
+        // Strong framework indicators
+        if (t.contains("org.springframework")) return true;
+        if (t.contains("jakarta.persistence") || t.contains("javax.persistence")) return true;
+        if (t.contains("@service") || t.contains("@entity") || t.contains("@controller")) return true;
+        if (t.contains("crudrepository") || t.contains("jparepository")) return true;
+
+        // Avoid package/import in hints
+        if (t.contains("package ")) return true;
+        if (t.contains("import ")) return true;
+
+        return false;
+    }
 
     // ============================================================
     // 8) Subject / Concepts / Examples
@@ -1083,83 +1710,173 @@ public class LLMService {
         }
     }
 
-    private String generateExamplesFromTask(String task, String className) {
+    private String generateExamplesFromTask(String task, String className, String solution) {
+        // Add diagnostic logging
+        logger.info("[EXAMPLES] task='{}'", task);
+        
         if (task == null || task.isBlank()) {
-            return "Voir l'énoncé pour les exemples d'entrées / sorties.";
-        }
-
-        String prompt = "Tu es un expert en pédagogie. Génère 3 exemples CONCRETS et VARIÉS pour cet exercice.\n\n"
-            + "=== EXERCICE ===\n" + task + "\n\n"
-            + "=== EXIGENCES ===\n"
-            + "1. Génère EXACTEMENT 3 exemples\n"
-            + "2. Format OBLIGATOIRE : 'Entrée : [valeur] → Sortie : [résultat]'\n"
-            + "3. Chaque exemple sur une ligne séparée\n"
-            + "4. Exemples VARIÉS : cas simple, cas avec valeurs multiples, cas limite\n"
-            + "5. Utilise des valeurs CONCRÈTES et RÉALISTES\n"
-            + "6. PAS de code, PAS de markdown, UNIQUEMENT le format Entrée → Sortie\n\n"
-            + "=== EXEMPLE DE FORMAT ===\n"
-            + "Si l'exercice demande de calculer la somme d'un tableau :\n"
-            + "Entrée : [1, 2, 3] → Sortie : 6\n"
-            + "Entrée : [10, 20, 30, 40] → Sortie : 100\n"
-            + "Entrée : [] → Sortie : 0\n\n"
-            + "=== RÉPONSE ===\n"
-            + "Génère 3 exemples dans le format exact ci-dessus, une ligne par exemple :";
-    
-        String examples = callLlamaAPI(prompt, 200);
-        examples = sanitize(examples);
-        examples = formatExamples(examples);
-
-        if (examples == null || examples.isBlank() || !examples.contains("→")) {
+            logger.warn("[EXAMPLES] USING FALLBACK. task is blank");
             return createDefaultExamples();
         }
-    
-        return examples.trim();
-    }
-    
-    private String formatExamples(String examples) {
-        if (examples == null || examples.isBlank()) {
-            return examples;
+
+        // Try to extract method signature from solution for more accurate examples
+        String methodInfo = extractMethodInfoForExamples(solution);
+        logger.info("[EXAMPLES] methodInfo='{}'", methodInfo != null ? methodInfo : "null");
+        
+        // Build enhanced prompt with solution context
+        StringBuilder promptBuilder = new StringBuilder();
+        promptBuilder.append("Génère EXACTEMENT 3 exemples CONCRETS et VARIÉS pour cet exercice.\n\n");
+        promptBuilder.append("=== EXERCICE ===\n").append(task).append("\n\n");
+        
+        if (methodInfo != null && !methodInfo.isBlank()) {
+            promptBuilder.append("=== SIGNATURE DE LA MÉTHODE ===\n");
+            promptBuilder.append(methodInfo).append("\n");
+            promptBuilder.append("(Utilise cette signature pour comprendre les types d'entrée et de sortie)\n\n");
         }
         
-        String[] lines = examples.split("\n");
-        StringBuilder formatted = new StringBuilder();
+        promptBuilder.append("=== EXIGENCES ABSOLUES ===\n");
+        promptBuilder.append("1. RENVOIE UNIQUEMENT un JSON array de 3 objets, SANS texte, SANS explication, SANS markdown\n");
+        promptBuilder.append("2. Format EXACT: [{\"input\":\"...\",\"output\":\"...\"},{\"input\":\"...\",\"output\":\"...\"},{\"input\":\"...\",\"output\":\"...\"}]\n");
+        promptBuilder.append("3. Les exemples DOIVENT correspondre EXACTEMENT à l'exercice décrit ci-dessus\n");
+        promptBuilder.append("4. Exemples VARIÉS :\n");
+        promptBuilder.append("   - Premier exemple : cas simple avec valeurs normales\n");
+        promptBuilder.append("   - Deuxième exemple : cas avec valeurs multiples/complexes\n");
+        promptBuilder.append("   - Troisième exemple : cas limite (tableau vide, null, chaîne vide, valeur négative, etc.)\n");
+        promptBuilder.append("5. Utilise des valeurs CONCRÈTES et RÉALISTES qui illustrent bien l'exercice\n");
+        promptBuilder.append("6. Les valeurs d'entrée et de sortie doivent être cohérentes avec l'exercice\n\n");
+        promptBuilder.append("=== FORMAT ===\n");
+        promptBuilder.append("RENVOIE UNIQUEMENT:\n");
+        promptBuilder.append("[{\"input\":\"...\",\"output\":\"...\"},{\"input\":\"...\",\"output\":\"...\"},{\"input\":\"...\",\"output\":\"...\"}]\n\n");
+        promptBuilder.append("Génère UNIQUEMENT le JSON array de 3 objets pour cet exercice :");
+    
+        // Try LLM generation (with retry on failure)
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                String raw = callLlamaAPI(promptBuilder.toString(), 300);
+                
+                // Log raw response for debugging
+                logger.info("[EXAMPLES] rawLLM='{}'", raw != null && raw.length() > 300 ? raw.substring(0, 300) + "..." : raw);
+                
+                // Extract JSON from response
+                String jsonStr = extractJsonFromResponse(raw);
+                logger.info("[EXAMPLES] extractedJson='{}'", jsonStr != null && jsonStr.length() > 200 ? jsonStr.substring(0, 200) + "..." : jsonStr);
+                
+                if (jsonStr == null || jsonStr.equals("[]")) {
+                    if (attempt == 0) {
+                        logger.warn("[EXAMPLES] No JSON found in response, retrying...");
+                        continue;
+                    }
+                    logger.warn("[EXAMPLES] USING FALLBACK. rawEmpty={}, jsonStr=null", raw == null || raw.isBlank());
+                    throw new IllegalArgumentException("No JSON found in response after retry");
+                }
+                
+                JsonNode node = objectMapper.readTree(jsonStr);
+                
+                if (!node.isArray() || node.size() < 3) {
+                    if (attempt == 0) {
+                        logger.warn("[EXAMPLES] Invalid JSON array size: {}, retrying...", node.size());
+                        continue;
+                    }
+                    logger.warn("[EXAMPLES] USING FALLBACK. Invalid array size: {}", node.size());
+                    throw new IllegalArgumentException("Invalid JSON array or wrong size: " + node.size());
+                }
+
+                StringBuilder sb = new StringBuilder();
+                int validExamples = 0;
+                for (int i = 0; i < node.size() && validExamples < 3; i++) {
+                    JsonNode example = node.get(i);
+                    if (!example.isObject()) continue;
+                    
+                    String input = example.has("input") ? example.get("input").asText().trim() : "";
+                    String output = example.has("output") ? example.get("output").asText().trim() : "";
+                    
+                    if (input.isEmpty() && output.isEmpty()) continue;
+                    
+                    sb.append("Entrée : ").append(input).append(" → Sortie : ").append(output);
+                    if (validExamples < 2) {
+                        sb.append("\n");
+                    }
+                    validExamples++;
+                }
+                
+                String result = sb.toString().trim();
+                if (result.isEmpty() || validExamples < 2) {
+                    if (attempt == 0) {
+                        logger.warn("[EXAMPLES] Not enough valid examples: {}, retrying...", validExamples);
+                        continue;
+                    }
+                    logger.warn("[EXAMPLES] USING FALLBACK. Not enough valid examples: {}", validExamples);
+                    throw new IllegalArgumentException("Not enough valid examples: " + validExamples);
+                }
+                
+                logger.info("[EXAMPLES] Successfully generated {} examples from LLM", validExamples);
+                return result;
+            } catch (Exception e) {
+                if (attempt == 0) {
+                    logger.warn("[EXAMPLES] Failed to parse examples JSON (attempt {}), retrying: {}", attempt + 1, e.getMessage());
+                    continue;
+                }
+                logger.error("[EXAMPLES] Failed to generate examples from LLM after retry: {}", e.getMessage());
+            }
+        }
         
+        // If all attempts failed, return simple default based on solution (not task keywords)
+        logger.warn("[EXAMPLES] USING FALLBACK. All LLM attempts failed. solutionBlank={}", solution == null || solution.isBlank());
+        return createSolutionBasedDefaultExamples(solution);
+    }
+    
+    private String createSolutionBasedDefaultExamples(String solution) {
+        // Simple fallback - just return default examples
+        return createDefaultExamples();
+    }
+    
+    private String extractMethodInfoForExamples(String solution) {
+        if (solution == null || solution.isBlank()) {
+            return null;
+        }
+        
+        // Extract first method signature for context
+        String[] lines = solution.split("\n");
         for (String line : lines) {
             String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
-            
-            if (trimmed.contains("→") || trimmed.contains("->") || trimmed.contains(":")) {
-                trimmed = trimmed.replace("->", "→").replace(":", " :");
-                if (!trimmed.startsWith("Entrée")) {
-                    trimmed = "Entrée : " + trimmed;
+            if ((trimmed.startsWith("public static") || trimmed.startsWith("private static"))
+                && trimmed.contains("(") && trimmed.contains(")")) {
+                // Return a simplified version for prompt context
+                int openParen = trimmed.indexOf('(');
+                int closeParen = trimmed.indexOf(')');
+                if (openParen > 0 && closeParen > openParen) {
+                    return trimmed.substring(0, Math.min(closeParen + 1, trimmed.length()));
                 }
-                formatted.append(trimmed).append("\n");
-            } else if (trimmed.matches(".*\\[.*\\].*")) {
-                formatted.append("Entrée : ").append(trimmed).append("\n");
             }
         }
-        
-        String result = formatted.toString().trim();
-        if (result.isEmpty()) {
-            return examples;
-        }
-        
-        String[] resultLines = result.split("\n");
-        if (resultLines.length > 3) {
-            StringBuilder limited = new StringBuilder();
-            for (int i = 0; i < 3; i++) {
-                limited.append(resultLines[i]).append("\n");
-            }
-            return limited.toString().trim();
-        }
-        
-        return result;
+        return null;
     }
     
+    private String extractJsonFromResponse(String response) {
+        if (response == null || response.isBlank()) {
+            return null;
+        }
+        
+        // Remove markdown code blocks if present
+        String r = response.replaceAll("```json", "").replaceAll("```", "").trim();
+        
+        // Use regex to extract JSON array - don't require it to start at beginning
+        // This handles cases where LLM returns text before the JSON like "Voici des exemples :"
+        Pattern jsonPattern = Pattern.compile("\\[\\s*\\{.*?\\}\\s*(?:,\\s*\\{.*?\\}\\s*)*\\]", Pattern.DOTALL);
+        Matcher matcher = jsonPattern.matcher(r);
+        if (matcher.find()) {
+            return matcher.group(0);
+        }
+        
+        return null;
+    }
+    
+    
     private String createDefaultExamples() {
-        return "Exemples d'utilisation :\n"
-            + "- Choisissez quelques entrées adaptées à la consigne (cas simple, cas limite) et indiquez la sortie attendue.\n"
-            + "- Par exemple : Entrée : valeur simple → Sortie : résultat conforme à la description.";
+        // Neutral generic template - no specific algorithm implied
+        return "Entrée : (exemple 1) → Sortie : (résultat 1)\n"
+            + "Entrée : (exemple 2) → Sortie : (résultat 2)\n"
+            + "Entrée : (cas limite) → Sortie : (résultat)";
     }
 
     // ============================================================
@@ -1197,34 +1914,71 @@ public class LLMService {
         return null;
     }
     
-    private String generateClassNameFromWords(String task) {
-        String clean = task.trim();
-        String[] words = clean.split("\\s+");
-        StringBuilder sb = new StringBuilder();
+    private String normalizeAscii(String s) {
+        if (s == null) return "";
+        String n = Normalizer.normalize(s, Normalizer.Form.NFD);
+        n = DIACRITICS.matcher(n).replaceAll("");   // É -> E, é -> e
+        n = n.replaceAll("[^A-Za-z0-9]", "");       // keep only letters/digits
+        return n;
+    }
 
-        for (int i = 0; i < Math.min(words.length, 4); i++) {
-            String w = words[i].replaceAll("[^a-zA-Z0-9]", "");
-            if (w.length() <= 2) continue;
-            String lower = w.toLowerCase(Locale.ROOT);
-            if (isStopWord(lower)) {
+    private boolean isNoiseLeadingWord(String w) {
+        return switch (w) {
+            case "ecrire", "ecris", "ecrit",
+                 "implementer", "implement", "impl", "implementerune", 
+                 "creer", "create", "write",
+                 "exercice", "exercise" -> true;
+            default -> isStopWord(w);
+        };
+    }
+
+    private boolean isStopWord(String w) {
+        return switch (w) {
+            case "les","des","une","un","la","le","du","de","d",
+                 "pour","avec","dans","ou","où","que","qui",
+                 "the","and","a","an","to","of",
+                 "students","etudiants",
+                 "fonction","function","methode","method","classe","class","programme","program" -> true;
+            default -> false;
+        };
+    }
+
+    private String generateClassNameFromWords(String task) {
+        String clean = task == null ? "" : task.trim();
+        if (clean.isEmpty()) return "Solution";
+
+        String[] rawWords = clean.split("\\s+");
+
+        // 1) 先跳过开头噪音词（Écrire/Créer/Implémenter/Exercice...）
+        int i = 0;
+        while (i < rawWords.length) {
+            String w = normalizeAscii(rawWords[i]).toLowerCase(Locale.ROOT);
+            if (w.isEmpty() || isNoiseLeadingWord(w)) {
+                i++;
                 continue;
             }
-            sb.append(Character.toUpperCase(w.charAt(0)))
-              .append(w.substring(1).toLowerCase());
+            break;
         }
 
-        String result = sb.toString();
-        if (result.isEmpty() || !Character.isLetter(result.charAt(0))) {
-            result = "Solution";
+        // 2) 从后面开始取最多 3 个"有意义"的词来拼类名
+        StringBuilder sb = new StringBuilder();
+        int picked = 0;
+        for (; i < rawWords.length && picked < 3; i++) {
+            String wRaw = normalizeAscii(rawWords[i]);
+            if (wRaw.isEmpty()) continue;
+
+            String w = wRaw.toLowerCase(Locale.ROOT);
+            if (isStopWord(w) || isNoiseLeadingWord(w)) continue;
+            if (w.length() < 3) continue;
+
+            sb.append(Character.toUpperCase(wRaw.charAt(0)))
+              .append(wRaw.substring(1).toLowerCase(Locale.ROOT));
+            picked++;
         }
+
+        String result = sb.toString().replaceAll("[^A-Za-z0-9_]", "");
+        if (result.isEmpty() || !Character.isLetter(result.charAt(0))) return "Solution";
         return result;
-    }
-    
-    private boolean isStopWord(String word) {
-        return word.equals("les") || word.equals("des") || word.equals("une")
-            || word.equals("pour") || word.equals("avec") || word.equals("dans")
-            || word.equals("où") || word.equals("que") || word.equals("the")
-            || word.equals("and") || word.equals("students") || word.equals("étudiants");
     }
 
     // ============================================================
@@ -1269,59 +2023,280 @@ public class LLMService {
     private String cleanJavaSnippet(String code) {
         if (code == null) return "";
         String cleaned = code.trim();
+        
+        // Remove markdown code block markers
         cleaned = cleaned.replaceAll("(?i)```java", "");
         cleaned = cleaned.replaceAll("```", "");
-        cleaned = cleaned.replaceAll("(?i)^.*?public\\s+class", "public class");
-        cleaned = cleaned.replaceAll("(?i)^.*?class\\s+", "class ");
-
-        StringBuilder sb = new StringBuilder();
-        String[] lines = cleaned.split("\n");
-        boolean codeStarted = false;
-        for (String line : lines) {
-            String trim = line.trim();
-            if (trim.startsWith("package ")) {
-                continue;
-            }
-            if (trim.startsWith("import ") || trim.startsWith("public ") || trim.startsWith("class ")) {
-                codeStarted = true;
-            }
-            if (codeStarted || !trim.isEmpty()) {
-                sb.append(line).append("\n");
-            }
+        
+        // Only extract from first "public class" onwards, don't use "class " as fallback
+        // This prevents the second replaceAll from overwriting "public class" and causing class name issues
+        int idx = cleaned.toLowerCase(Locale.ROOT).indexOf("public class");
+        if (idx >= 0) {
+            cleaned = cleaned.substring(idx);
         }
-        return sb.toString().trim();
+
+        // Don't drop imports (some solutions need them)
+        return cleaned.trim();
     }
 
     private String cleanJavaTestSnippet(String code, String expectedTestClassName) {
         if (code == null) return "";
-        String cleaned = cleanJavaSnippet(code);
-
+        
+        // Remove duplicate sections (common LLM issue)
+        code = removeDuplicateSections(code);
+        
+        // For test code, we need to preserve imports, so don't use cleanJavaSnippet
+        // which starts from "public class" and removes imports
+        String cleaned = code.trim();
+        
+        // Remove markdown code block markers
+        cleaned = cleaned.replaceAll("(?i)```java", "");
+        cleaned = cleaned.replaceAll("```", "");
+        
+        // Find import statements and class declaration
         int idxImport = indexOfIgnoreCase(cleaned, "import ");
         int idxClass = indexOfIgnoreCase(cleaned, "public class ");
-
-        int start = findStartIndex(idxImport, idxClass);
+        
+        // If we have imports, start from the first import
+        // Otherwise, start from the class declaration
+        int start = 0;
+        if (idxImport >= 0 && (idxClass < 0 || idxImport < idxClass)) {
+            start = idxImport;
+        } else if (idxClass >= 0) {
+            start = idxClass;
+        }
+        
         if (start > 0) {
             cleaned = cleaned.substring(start);
         }
+        
+        // Ensure we have the required JUnit imports if they're missing
+        if (!cleaned.contains("import org.junit.jupiter.api.Test")) {
+            // Add imports at the beginning
+            String imports = "import org.junit.jupiter.api.Test;\n"
+                + "import static org.junit.jupiter.api.Assertions.*;\n\n";
+            
+            // Find where the class declaration starts
+            int classIdx = indexOfIgnoreCase(cleaned, "public class ");
+            if (classIdx >= 0) {
+                cleaned = cleaned.substring(0, classIdx) + imports + cleaned.substring(classIdx);
+            } else {
+                // If no class found, prepend imports
+                cleaned = imports + cleaned;
+            }
+        } else if (!cleaned.contains("import static org.junit.jupiter.api.Assertions")) {
+            // Add static import if missing
+            int testImportIdx = cleaned.indexOf("import org.junit.jupiter.api.Test");
+            if (testImportIdx >= 0) {
+                int nextLineIdx = cleaned.indexOf("\n", testImportIdx);
+                if (nextLineIdx >= 0) {
+                    cleaned = cleaned.substring(0, nextLineIdx + 1) 
+                        + "import static org.junit.jupiter.api.Assertions.*;\n" 
+                        + cleaned.substring(nextLineIdx + 1);
+                }
+            }
+        }
 
+        // Extract the actual class name being tested (before "Test")
+        String className = expectedTestClassName != null && expectedTestClassName.endsWith("Test")
+            ? expectedTestClassName.substring(0, expectedTestClassName.length() - 4)
+            : null;
+
+        // Fix test class name
         if (expectedTestClassName != null && !expectedTestClassName.isBlank()) {
             cleaned = cleaned.replaceAll("class\\s+\\w+Test", "class " + expectedTestClassName);
+            cleaned = cleaned.replaceAll("class\\s+\\w+Test\\s*\\{", "class " + expectedTestClassName + " {");
         }
+
+        // Fix incorrect class names in test assertions (e.g., "Crire" -> correct className)
+        if (className != null && !className.isEmpty()) {
+            // Remove common incorrect class names
+            cleaned = cleaned.replaceAll("\\bCrire\\b", className);
+            cleaned = cleaned.replaceAll("\\bCrireFonctionQui\\b", className);
+            cleaned = cleaned.replaceAll("\\bCrirereverse\\b", className + ".reverse");
+            // Fix any class name that doesn't match the expected pattern
+            cleaned = fixIncorrectClassNames(cleaned, className);
+        }
+
+        // Remove any remaining duplicate test methods
+        cleaned = removeDuplicateTestMethods(cleaned);
 
         return cleaned.trim();
     }
     
-    private int findStartIndex(int idxImport, int idxClass) {
-        if (idxImport >= 0 && idxClass >= 0) {
-            return Math.min(idxImport, idxClass);
-        } else if (idxImport >= 0) {
-            return idxImport;
-        } else if (idxClass >= 0) {
-            return idxClass;
+    private String removeDuplicateSections(String code) {
+        if (code == null || code.length() < 100) return code;
+        
+        // Split by common delimiters that indicate duplicate sections
+        String[] sections = code.split("===|---|```");
+        
+        // If we have multiple sections with similar content, keep only the first complete one
+        if (sections.length > 3) {
+            // Look for the first section that contains a complete test class
+            for (int i = 0; i < sections.length; i++) {
+                String section = sections[i];
+                if (section.contains("public class") && section.contains("@Test") 
+                    && section.contains("assertEquals")) {
+                    return section;
+                }
+            }
         }
-        return -1;
+        
+        // Remove repeated patterns (e.g., same test method appearing multiple times)
+        return removeRepeatedPatterns(code);
     }
-
+    
+    private String removeRepeatedPatterns(String code) {
+        if (code == null) return code;
+        
+        String[] lines = code.split("\n");
+        StringBuilder result = new StringBuilder();
+        Set<String> seenMethods = new HashSet<>();
+        boolean inMethod = false;
+        StringBuilder currentMethod = new StringBuilder();
+        
+        for (String line : lines) {
+            String trimmed = line.trim();
+            
+            // Detect start of test method
+            if (trimmed.startsWith("@Test") || (trimmed.startsWith("void test") && trimmed.contains("()"))) {
+                if (inMethod && currentMethod.length() > 0) {
+                    String methodKey = currentMethod.toString().trim();
+                    if (!seenMethods.contains(methodKey)) {
+                        result.append(currentMethod);
+                        seenMethods.add(methodKey);
+                    }
+                    currentMethod.setLength(0);
+                }
+                inMethod = true;
+                currentMethod.append(line).append("\n");
+            } else if (inMethod) {
+                currentMethod.append(line).append("\n");
+                // Detect end of method
+                if (trimmed.equals("}") && currentMethod.toString().contains("{")) {
+                    String methodKey = currentMethod.toString().trim();
+                    if (!seenMethods.contains(methodKey)) {
+                        result.append(currentMethod);
+                        seenMethods.add(methodKey);
+                    }
+                    currentMethod.setLength(0);
+                    inMethod = false;
+                }
+            } else {
+                result.append(line).append("\n");
+            }
+        }
+        
+        // Add last method if any
+        if (currentMethod.length() > 0) {
+            String methodKey = currentMethod.toString().trim();
+            if (!seenMethods.contains(methodKey)) {
+                result.append(currentMethod);
+            }
+        }
+        
+        return result.toString();
+    }
+    
+    private String fixIncorrectClassNames(String code, String correctClassName) {
+        if (code == null || correctClassName == null) return code;
+        
+        // Find all class references in assertions (e.g., "ClassName.methodName(")
+        Pattern pattern = Pattern.compile("(\\w+)\\.(\\w+)\\s*\\(");
+        Matcher matcher = pattern.matcher(code);
+        StringBuffer result = new StringBuffer();
+        
+        while (matcher.find()) {
+            String foundClassName = matcher.group(1);
+            String methodName = matcher.group(2);
+            
+            // If the class name looks incorrect (too short, doesn't match pattern, etc.)
+            if (isIncorrectClassName(foundClassName, correctClassName)) {
+                matcher.appendReplacement(result, correctClassName + "." + methodName + "(");
+            } else {
+                matcher.appendReplacement(result, matcher.group(0));
+            }
+        }
+        matcher.appendTail(result);
+        
+        return result.toString();
+    }
+    
+    private boolean isIncorrectClassName(String foundName, String correctName) {
+        if (foundName == null || foundName.isEmpty()) return true;
+        if (foundName.equals(correctName)) return false;
+        
+        // Common incorrect patterns
+        if (foundName.length() < 4) return true; // Too short (e.g., "Crire")
+        if (foundName.toLowerCase().contains("crire")) return true;
+        if (foundName.toLowerCase().startsWith("cr")) return true; // Common typo pattern
+        
+        return false;
+    }
+    
+    private String removeDuplicateTestMethods(String code) {
+        if (code == null) return code;
+        
+        String[] lines = code.split("\n");
+        Map<String, Integer> methodSignatures = new LinkedHashMap<>();
+        StringBuilder result = new StringBuilder();
+        StringBuilder currentMethod = new StringBuilder();
+        String currentSignature = null;
+        boolean inMethod = false;
+        int braceCount = 0;
+        
+        for (String line : lines) {
+            String trimmed = line.trim();
+            
+            // Detect test method start
+            if (trimmed.startsWith("@Test") || (trimmed.startsWith("void test") && trimmed.contains("()"))) {
+                if (inMethod && currentSignature != null) {
+                    // Save previous method
+                    methodSignatures.put(currentSignature, methodSignatures.getOrDefault(currentSignature, 0) + 1);
+                    if (methodSignatures.get(currentSignature) == 1) {
+                        result.append(currentMethod);
+                    }
+                    currentMethod.setLength(0);
+                }
+                inMethod = true;
+                currentSignature = trimmed;
+                currentMethod.append(line).append("\n");
+                braceCount = 0;
+            } else if (inMethod) {
+                currentMethod.append(line).append("\n");
+                // Count braces to detect method end
+                for (char c : line.toCharArray()) {
+                    if (c == '{') braceCount++;
+                    if (c == '}') braceCount--;
+                }
+                if (braceCount == 0 && currentMethod.toString().contains("}")) {
+                    // Method ended
+                    if (currentSignature != null) {
+                        methodSignatures.put(currentSignature, methodSignatures.getOrDefault(currentSignature, 0) + 1);
+                        if (methodSignatures.get(currentSignature) == 1) {
+                            result.append(currentMethod);
+                        }
+                    }
+                    currentMethod.setLength(0);
+                    currentSignature = null;
+                    inMethod = false;
+                }
+            } else {
+                result.append(line).append("\n");
+            }
+        }
+        
+        // Add last method if any
+        if (currentMethod.length() > 0 && currentSignature != null) {
+            methodSignatures.put(currentSignature, methodSignatures.getOrDefault(currentSignature, 0) + 1);
+            if (methodSignatures.get(currentSignature) == 1) {
+                result.append(currentMethod);
+            }
+        }
+        
+        return result.toString();
+    }
+    
     private int indexOfIgnoreCase(String text, String token) {
         if (text == null || token == null) return -1;
         return text.toLowerCase(Locale.ROOT).indexOf(token.toLowerCase(Locale.ROOT));
@@ -1367,10 +2342,15 @@ public class LLMService {
             return code;
         }
 
-        code = code.replaceAll("public class " + current, "public class " + expectedClassName);
-        code = code.replaceAll("class " + current + " ", "class " + expectedClassName + " ");
-        code = code.replaceAll("class " + current + "\\{", "class " + expectedClassName + "{");
-        code = code.replaceAll("class " + current + "\n", "class " + expectedClassName + "\n");
+        // Use more precise regex to only replace the class declaration line
+        // This prevents accidental replacements in other parts of the code
+        // Match: whitespace + public + whitespace + class + whitespace + classname + whitespace + {
+        code = code.replaceFirst("(?m)^\\s*public\\s+class\\s+\\w+\\s*\\{",
+                                 "public class " + expectedClassName + " {");
+        
+        // Also handle non-public class declarations
+        code = code.replaceFirst("(?m)^\\s*class\\s+\\w+\\s*\\{",
+                                 "class " + expectedClassName + " {");
 
         return code;
     }

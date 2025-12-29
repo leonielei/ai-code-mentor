@@ -6,15 +6,12 @@ Plateforme d'apprentissage de programmation pilotée par l'IA - Génération et 
 
 1. [Présentation](#-présentation)
 2. [Fonctionnalités](#-fonctionnalités)
-3. [Architecture technique](#-architecture-technique)
-4. [Prérequis](#-prérequis)
-5. [Installation](#-installation)
-6. [Démarrage](#-démarrage)
-7. [Configuration](#-configuration)
-8. [Utilisation](#-utilisation)
-9. [Dépannage](#-dépannage)
-10. [Architecture du code](#-architecture-du-code)
-11. [Développement](#-développement)
+3. [Prérequis](#-prérequis)
+4. [Installation](#-installation)
+5. [Démarrage](#-démarrage)
+6. [Configuration](#-configuration)
+7. [Utilisation](#-utilisation)
+8. [Dépannage](#-dépannage)
 
 ---
 
@@ -69,47 +66,6 @@ AICodeMentor est une plateforme éducative qui utilise l'intelligence artificiel
   - Indices personnalisés générés par IA
   - Analyse du code de l'étudiant
   - Suggestions contextuelles sans révéler la solution
-
----
-
-## 🏗️ Architecture technique
-
-### Frontend
-
-| Technologie | Version | Rôle |
-|------------|---------|------|
-| Vue.js | 3.4+ | Framework frontend |
-| Vite | 5.2+ | Build tool et serveur de développement |
-| Bootstrap | 5.3+ | Framework CSS |
-| Monaco Editor | 0.45+ | Éditeur de code |
-| Vue Router | 4.2+ | Routage |
-| Axios | 1.6+ | Client HTTP |
-
-### Backend
-
-| Technologie | Version | Rôle |
-|------------|---------|------|
-| Spring Boot | 3.2+ | Framework backend |
-| Spring Data JPA | - | Accès aux données |
-| H2 Database | - | Base de données (fichier) |
-| JUnit 5 | - | Exécution de tests |
-| Maven | 3.6+ | Gestion des dépendances |
-
-### Intelligence artificielle
-
-| Composant | Description |
-|-----------|-------------|
-| llama.cpp | Serveur d'inférence local |
-| deepseek-coder-6.7b | Modèle de langage spécialisé en code |
-| Format | GGUF (quantisé Q2_K, ~2.5GB) |
-
-### Ports des services
-
-| Service | Port | URL |
-|---------|------|-----|
-| Frontend | 3000 | http://localhost:3000 |
-| Backend API | 8080 | http://localhost:8080 |
-| llama.cpp | 11435 | http://localhost:11435 |
 
 ---
 
@@ -198,61 +154,60 @@ mvn process-classes
 
 Le modèle sera placé dans : `llama-cpp/models/deepseek-coder-6.7b-instruct.Q2_K.gguf`
 
+**Note** : Vous pouvez utiliser d'autres versions quantisées (Q4_K_M, Q5_K_M, etc.) en téléchargeant manuellement le modèle et en mettant à jour la configuration dans `application.yml`.
+
 ---
 
 ## 🚀 Démarrage
 
-### Option A : Démarrage automatique (recommandé pour débutants)
+Le système nécessite 3 services qui doivent être démarrés dans l'ordre :
+
+### 1. Démarrer llama.cpp (serveur LLM)
 
 **Windows** :
 ```powershell
-.\start-all.bat
+cd llama-cpp
+.\llama-server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
 ```
 
 **Linux / macOS** :
 ```bash
-./start-all.sh
-```
-
-Cette commande démarre automatiquement :
-1. llama.cpp (mode CPU)
-2. Backend Spring Boot
-3. Frontend Vue.js
-
-Attendre que tous les services soient prêts, puis accéder à : **http://localhost:3000**
-
-### Option B : Démarrage manuel (recommandé pour GPU)
-
-#### 1. Démarrer llama.cpp
-
-**Mode CPU** (par défaut) :
-```bash
 cd llama-cpp
-# Windows
-.\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
-
-# Linux / macOS
 ./server -m models/deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
 ```
 
-**Mode GPU** (voir section [Accélération GPU](#-accélération-gpu) pour les détails)
+**Note** : Si vous utilisez un autre modèle (Q4_K_M, Q5_K_M, etc.), remplacez `Q2_K` par le nom de votre modèle dans la commande ci-dessus.
 
-#### 2. Démarrer le backend
+**Vérification** : Attendre le message "HTTP server listening" dans la console.
+
+**Note** : Gardez cette fenêtre ouverte. Le serveur doit rester actif.
+
+### 2. Démarrer le backend (Spring Boot)
+
+Ouvrir un **nouveau terminal** :
 
 ```bash
 cd backend
 mvn spring-boot:run
 ```
 
-Vérifier que le backend est prêt : http://localhost:8080/api/exercises
+**Vérification** : Attendre le message "Started AiCodeMentorApplication" et vérifier : http://localhost:8080/api/exercises
 
-#### 3. Démarrer le frontend
+**Note** : Gardez cette fenêtre ouverte.
+
+### 3. Démarrer le frontend (Vue.js)
+
+Ouvrir un **nouveau terminal** :
 
 ```bash
 npm run dev
 ```
 
-Accéder à : **http://localhost:3000**
+**Vérification** : Le terminal affichera l'URL (généralement http://localhost:5173)
+
+### Accès à l'application
+
+Une fois les 3 services démarrés, accéder à : **http://localhost:5173** (ou l'URL affichée par Vite)
 
 ---
 
@@ -273,42 +228,33 @@ spring:
     url: jdbc:h2:file:./data/testdb
     username: sa
     password: password
-  
-  # Console H2 (développement)
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
 
 # Configuration LLM
 llm:
   provider: llamacpp
   llamacpp:
     base-url: http://localhost:11435
+    model: deepseek-coder-6.7b-instruct.Q2_K  # Ou Q4_K_M, Q5_K_M, etc.
+    timeout: 300  # Augmenter à 300 pour Q4/Q5
 ```
 
 ### Configuration du frontend
 
-Fichier : `vite.config.js`
-
-Le proxy est configuré pour rediriger `/api` vers `http://localhost:8080` en développement.
+Le proxy est configuré dans `vite.config.js` pour rediriger `/api` vers `http://localhost:8080` en développement.
 
 ---
 
-## ⚡ Accélération GPU
+## ⚡ Accélération GPU (optionnel)
 
 ### NVIDIA GPU (CUDA)
 
-**Prérequis** :
-- NVIDIA GPU avec support CUDA
-- CUDA Toolkit installé
-- Version CUDA de llama.cpp
-
-**Démarrage** :
+**Démarrage avec GPU** :
 ```bash
 cd llama-cpp
-.\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 35 -c 4096 --port 11435
+.\llama-server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 35 -c 4096 --port 11435
 ```
+
+**Note** : Remplacez `Q2_K` par votre modèle si vous utilisez une autre version.
 
 **Paramètres recommandés** :
 - `-ngl 35` : 35 couches sur GPU (ajuster selon la mémoire GPU)
@@ -320,29 +266,12 @@ cd llama-cpp
 nvidia-smi  # Vérifier l'utilisation GPU
 ```
 
-### Intel GPU intégré (Vulkan)
+### Mode CPU (par défaut)
 
-**Prérequis** :
-- Pilotes Vulkan installés
-- Version Vulkan de llama.cpp
-
-**Démarrage** :
+Si vous n'avez pas de GPU ou rencontrez des problèmes, utilisez le mode CPU :
 ```bash
-cd llama-cpp
-./server -m models/deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 15 -c 4096 -t 4 --port 11435
+-ngl 0  # Toutes les couches sur CPU
 ```
-
-**Paramètres recommandés** :
-- `-ngl 15` : 15 couches sur GPU Vulkan
-- Réduire à `-ngl 10` ou `-ngl 5` si mémoire insuffisante
-
-### Paramètres de performance
-
-| Mode | Vitesse | Utilisation |
-|------|---------|-------------|
-| CPU | ~5-6 tokens/s | 100% CPU |
-| NVIDIA GPU | ~20-50 tokens/s | GPU + CPU partiel |
-| Intel Vulkan | ~8-15 tokens/s | GPU intégré + CPU |
 
 ---
 
@@ -351,14 +280,10 @@ cd llama-cpp
 ### Workflow enseignant
 
 1. **Créer un exercice**
-   - Accéder à "Créer un exercice"
+   - Se connecter avec un compte enseignant (teacher@demo.com / demo123)
+   - Accéder à "Créer"
    - Décrire l'exercice en langage naturel (ex: "Écrire une fonction qui inverse une chaîne")
-   - L'IA génère automatiquement :
-     - Énoncé détaillé
-     - Code de départ
-     - Tests unitaires
-     - Solution
-     - Exemples
+   - L'IA génère automatiquement : énoncé, code de départ, tests, solution, exemples
 
 2. **Modifier et personnaliser**
    - Utiliser l'éditeur pour ajuster le code
@@ -372,6 +297,7 @@ cd llama-cpp
 ### Workflow étudiant
 
 1. **Parcourir les exercices**
+   - Se connecter avec un compte étudiant (student@demo.com / demo123)
    - Consulter la liste des exercices publiés
    - Filtrer par thème ou difficulté
    - Sélectionner un exercice
@@ -383,8 +309,14 @@ cd llama-cpp
 
 3. **Obtenir de l'aide**
    - Si les tests échouent, consulter les erreurs
-   - Demander un indice (généré automatiquement par IA)
+   - Cliquer sur "Obtenir un Indice" (généré automatiquement par IA)
    - Itérer jusqu'à résolution
+
+### Comptes de démonstration
+
+- **Enseignant 1** : `teacher@demo.com` / `demo123`
+- **Enseignant 2** : `teacher2@demo.com` / `demo123`
+- **Étudiant** : `student@demo.com` / `demo123`
 
 ---
 
@@ -392,14 +324,24 @@ cd llama-cpp
 
 ### Problème : Port déjà utilisé
 
-**Solution** :
+**Port 8080 (backend)** :
 ```bash
-# Arrêter tous les services
-.\stop-all.bat  # Windows
-./stop-all.sh   # Linux/Mac
+# Windows
+netstat -ano | findstr :8080
+taskkill /PID <PID> /F
 
-# Attendre 5 secondes, puis redémarrer
-.\start-all.bat
+# Linux/Mac
+lsof -ti:8080 | xargs kill -9
+```
+
+**Port 11435 (llama.cpp)** :
+```bash
+# Windows
+netstat -ano | findstr :11435
+taskkill /PID <PID> /F
+
+# Linux/Mac
+lsof -ti:11435 | xargs kill -9
 ```
 
 ### Problème : Frontend vide ou erreurs
@@ -423,29 +365,15 @@ curl http://localhost:11435/health
 1. Vérifier que llama.cpp est démarré
 2. Vérifier le port (11435)
 3. Vérifier les logs pour les erreurs
-
-### Problème : GPU ne fonctionne pas
-
-**NVIDIA GPU** :
-1. Vérifier CUDA : `nvidia-smi`
-2. Vérifier la présence de `ggml-cuda.dll` (Windows) ou `libggml-cuda.so` (Linux)
-3. Si problème, utiliser mode CPU : `-ngl 0`
-
-**Intel GPU** :
-1. Vérifier Vulkan : `vulkaninfo` (si installé)
-2. Si problème, utiliser mode CPU : `-ngl 0`
-
-**Solution universelle** : Utiliser le mode CPU pur
-```bash
-.\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
-```
+4. Vérifier que le modèle est présent dans `llama-cpp/models/`
 
 ### Problème : Erreur de compilation Java
 
 **Vérifier Java 25** :
 ```bash
 java -version  # Doit afficher version 25
-echo $JAVA_HOME  # Doit pointer vers Java 25
+echo $JAVA_HOME  # Doit pointer vers Java 25 (Linux/Mac)
+echo %JAVA_HOME%  # Doit pointer vers Java 25 (Windows)
 ```
 
 **Si problème** :
@@ -453,146 +381,79 @@ echo $JAVA_HOME  # Doit pointer vers Java 25
 2. Reconfigurer `JAVA_HOME`
 3. Redémarrer le terminal
 
+### Problème : Modèle non trouvé
+
+Si le modèle n'est pas téléchargé automatiquement :
+
+1. Télécharger manuellement depuis HuggingFace :
+   - URL : `https://huggingface.co/TheBloke/deepseek-coder-6.7B-instruct-GGUF`
+   - Fichiers disponibles : Q2_K (~2.5GB), Q4_K_M (~4GB), Q5_K_M (~5GB), Q8_0 (~7GB)
+   - Placer dans : `llama-cpp/models/`
+
+2. Mettre à jour la configuration dans `application.yml` :
+   ```yaml
+   llm:
+     llamacpp:
+       model: deepseek-coder-6.7b-instruct.Q4_K_M  # Nom du modèle téléchargé
+   ```
+
+3. Utiliser le nom du modèle dans la commande de démarrage de llama.cpp
+
 ---
 
-## 📚 Architecture du code
+## 🏗️ Architecture technique
 
-### Structure du projet
+### Frontend
+- **Vue.js 3.4+** - Framework frontend
+- **Vite 5.2+** - Build tool et serveur de développement
+- **Bootstrap 5.3+** - Framework CSS
+- **Monaco Editor** - Éditeur de code
+
+### Backend
+- **Spring Boot 3.5+** - Framework backend
+- **Spring Data JPA** - Accès aux données
+- **H2 Database** - Base de données (fichier)
+- **JUnit 5** - Exécution de tests
+- **Maven** - Gestion des dépendances
+
+### Intelligence artificielle
+- **llama.cpp** - Serveur d'inférence local
+- **deepseek-coder-6.7b-instruct** - Modèle de langage spécialisé en code
+- **Format** : GGUF (quantisé Q2_K par défaut, ~2.5GB)
+
+### Ports des services
+
+| Service | Port | URL |
+|---------|------|-----|
+| Frontend | 5173 | http://localhost:5173 |
+| Backend API | 8080 | http://localhost:8080 |
+| llama.cpp | 11435 | http://localhost:11435 |
+
+---
+
+## 📚 Structure du projet
 
 ```
 ai-code-mentor-main/
-├── backend/                          # Backend Spring Boot
+├── backend/                    # Backend Spring Boot
 │   ├── src/main/java/
 │   │   └── com/aicodementor/
-│   │       ├── controller/           # Contrôleurs REST API
-│   │       │   ├── ExerciseController.java
-│   │       │   ├── LLMController.java
-│   │       │   ├── SubmissionController.java
-│   │       │   ├── UserController.java
-│   │       │   └── StatsController.java
-│   │       ├── service/              # Logique métier
-│   │       │   ├── LLMService.java
-│   │       │   └── CodeExecutionService.java
-│   │       ├── entity/               # Entités JPA
-│   │       │   ├── Exercise.java
-│   │       │   ├── User.java
-│   │       │   ├── Submission.java
-│   │       │   └── KnowledgeBase.java
-│   │       ├── repository/           # Accès aux données
-│   │       ├── dto/                  # Objets de transfert
-│   │       └── config/               # Configuration
-│   │           ├── CorsConfig.java
-│   │           ├── GlobalExceptionHandler.java
-│   │           └── DataInitializer.java
+│   │       ├── controller/     # Contrôleurs REST API
+│   │       ├── service/        # Logique métier
+│   │       ├── entity/         # Entités JPA
+│   │       ├── repository/    # Accès aux données
+│   │       └── config/         # Configuration
 │   └── pom.xml
-├── src/                              # Frontend Vue.js
-│   ├── views/                        # Pages
-│   │   ├── Home.vue
-│   │   ├── CreateExercise.vue
-│   │   ├── ExerciseList.vue
-│   │   ├── ExerciseDetail.vue
-│   │   └── ExerciseTest.vue
-│   ├── components/                   # Composants réutilisables
-│   │   ├── CodeEditor.vue
-│   │   └── Navbar.vue
-│   ├── services/                     # Services API
-│   │   ├── api.js
-│   │   └── llmApi.js
-│   └── router/                       # Routage
-├── llama-cpp/                        # Binaires et modèles
-│   ├── server.exe / server           # Serveur llama.cpp
+├── src/                        # Frontend Vue.js
+│   ├── views/                  # Pages
+│   ├── components/             # Composants réutilisables
+│   ├── services/               # Services API
+│   └── router/                 # Routage
+├── llama-cpp/                  # Binaires et modèles
+│   ├── llama-server.exe/server # Serveur llama.cpp
 │   └── models/
 │       └── deepseek-coder-6.7b-instruct.Q2_K.gguf
-├── start-all.bat / start-all.sh     # Scripts de démarrage
 └── package.json
-```
-
-### Flux de données
-
-```
-Frontend (Vue.js)
-    ↓ HTTP
-Backend (Spring Boot)
-    ↓ JPA
-Base de données (H2)
-    ↓
-Backend
-    ↓ HTTP
-llama.cpp (LLM local)
-```
-
-### API REST
-
-#### Exercices
-- `GET /api/exercises` - Liste paginée des exercices
-- `GET /api/exercises/{id}` - Détails d'un exercice
-- `POST /api/exercises` - Créer un exercice
-- `PUT /api/exercises/{id}` - Modifier un exercice
-- `DELETE /api/exercises/{id}` - Supprimer un exercice
-- `GET /api/exercises/published` - Exercices publiés
-
-#### LLM
-- `POST /api/llm/generate-exercise` - Générer un exercice
-- `POST /api/llm/save-exercise` - Sauvegarder un exercice généré
-- `POST /api/llm/execute-tests` - Exécuter des tests
-- `POST /api/llm/get-hint` - Obtenir un indice
-
-#### Soumissions
-- `GET /api/submissions` - Liste des soumissions
-- `POST /api/submissions` - Créer une soumission
-- `GET /api/submissions/user/{userId}` - Soumissions d'un utilisateur
-
----
-
-## 🛡️ Gestion des exceptions
-
-Le projet utilise une gestion centralisée des exceptions via `GlobalExceptionHandler`.
-
-### Types d'exceptions gérées
-
-| Exception | Code HTTP | Usage |
-|-----------|-----------|-------|
-| `IllegalArgumentException` | 400 | Paramètres invalides |
-| `DataIntegrityViolationException` | 400 | Violation contraintes DB |
-| `ConstraintViolationException` | 400 | Erreur de validation |
-| `NoHandlerFoundException` | 404 | Endpoint non trouvé |
-| `Exception` | 500 | Erreur générique |
-
-### Bonnes pratiques
-
-✅ **À faire** :
-- Utiliser `logger.error()`, `logger.warn()` pour les logs
-- Types de retour explicites : `ResponseEntity<Page<Exercise>>`
-- Capturer des exceptions spécifiques
-- Laisser les exceptions remonter au `GlobalExceptionHandler`
-- Utiliser `@Transactional` pour les opérations DB
-
-❌ **À éviter** :
-- `printStackTrace()` ou `System.out.println()`
-- `ResponseEntity<?>` (type générique)
-- `catch (Exception e)` générique
-- Gérer manuellement chaque exception
-
-### Hibernate Lazy Loading
-
-**Problème** : Accès aux associations lazy après fermeture de transaction
-
-**Solution** : Précharger dans la transaction
-```java
-@Transactional(readOnly = true)
-public ResponseEntity<Page<Exercise>> getAllExercises(...) {
-    Page<Exercise> exercises = exerciseRepository.findAll(pageable);
-    
-    // Précharger avant la fin de la transaction
-    exercises.getContent().forEach(ex -> {
-        if (ex.getCreator() != null) {
-            Hibernate.initialize(ex.getCreator());
-            ex.getCreator().getId();
-        }
-    });
-    
-    return ResponseEntity.ok(exercises);
-}
 ```
 
 ---
@@ -610,14 +471,6 @@ mvn clean compile
 **Frontend** :
 ```bash
 npm run build
-```
-
-### Tests
-
-**Backend** :
-```bash
-cd backend
-mvn test
 ```
 
 ### Base de données
@@ -640,10 +493,6 @@ logging:
 
 ---
 
-## 📄 Licence
-
-MIT License
-
 ## 🤝 Contribution
 
 Les contributions sont les bienvenues ! N'hésitez pas à :
@@ -653,4 +502,6 @@ Les contributions sont les bienvenues ! N'hésitez pas à :
 
 ---
 
-**🚀 Pour commencer : Exécutez `.\start-all.bat` puis accédez à http://localhost:3000**
+## 📄 Licence
+
+Ce projet est open-source.
