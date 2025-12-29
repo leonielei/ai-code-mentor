@@ -23,6 +23,8 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class CodeExecutionService {
@@ -74,8 +76,15 @@ public class CodeExecutionService {
             // Clean up
             cleanupTempDirectory(tempDir);
             
-        } catch (Exception e) {
-            logger.error("Error executing tests", e);
+        } catch (IOException e) {
+            logger.error("IO error executing tests", e);
+            response.setCompilationError("Erreur d'entrée/sortie lors de l'exécution: " + e.getMessage());
+            response.setAllTestsPassed(false);
+            response.setTotalTests(0);
+            response.setPassedTests(0);
+            response.setFailedTests(0);
+        } catch (RuntimeException e) {
+            logger.error("Runtime error executing tests", e);
             response.setCompilationError("Erreur d'exécution: " + e.getMessage());
             response.setAllTestsPassed(false);
             response.setTotalTests(0);
@@ -261,10 +270,10 @@ public class CodeExecutionService {
         }
         
         // Try to find public class declaration
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+        Pattern pattern = Pattern.compile(
             "(?:public\\s+)?class\\s+(\\w+)"
         );
-        java.util.regex.Matcher matcher = pattern.matcher(code);
+        Matcher matcher = pattern.matcher(code);
         if (matcher.find()) {
             return matcher.group(1);
         }
@@ -281,16 +290,16 @@ public class CodeExecutionService {
         }
         
         // Try to find test class declaration
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+        Pattern pattern = Pattern.compile(
             "(?:public\\s+)?class\\s+(\\w+Test\\w*)"
         );
-        java.util.regex.Matcher matcher = pattern.matcher(testCode);
+        Matcher matcher = pattern.matcher(testCode);
         if (matcher.find()) {
             return matcher.group(1);
         }
         
         // Fallback: try to find any class ending with Test
-        pattern = java.util.regex.Pattern.compile("class\\s+(\\w*Test\\w*)");
+        pattern = Pattern.compile("class\\s+(\\w*Test\\w*)");
         matcher = pattern.matcher(testCode);
         if (matcher.find()) {
             return matcher.group(1);

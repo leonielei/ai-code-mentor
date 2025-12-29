@@ -237,21 +237,23 @@
 
                         <!-- 真正的 Unix 下载和解压 -->
                         <target name="download-llama-unix-internal" unless="llama.exists.unix">
-                            <echo message="[INFO] llama.cpp not found, downloading for Linux x64 with GPU support..."/>
+                            <echo message="[INFO] llama.cpp not found, downloading for Linux x64 (Vulkan version, supports Intel integrated graphics GPU acceleration)..."/>
                             <mkdir dir="${project.basedir}/llama-cpp"/>
 
-                            <!-- 下载支持GPU的Linux x64版本 (CUDA版本，如果系统有NVIDIA GPU；否则使用CPU版本但支持OpenCL) -->
-                            <!-- 注意：Intel集成显卡不支持CUDA，但可以使用CPU版本或OpenCL加速 -->
-                            <get src="https://github.com/ggml-org/llama.cpp/releases/download/b7307/llama-b7307-bin-ubuntu-x64.zip"
-                                dest="${project.basedir}/llama-cpp/llama-cpp.zip"
+                            <!-- 下载Linux x64 Vulkan版本（支持Intel集成显卡GPU加速） -->
+                            <!-- 注意：Intel集成显卡支持Vulkan API，可以使用GPU加速 -->
+                            <get src="https://github.com/ggml-org/llama.cpp/releases/download/b7557/llama-b7557-bin-ubuntu-vulkan-x64.tar.gz"
+                                dest="${project.basedir}/llama-cpp/llama-cpp.tar.gz"
                                 verbose="true"/>
 
-                            <!-- 解压 zip（需要系统有 unzip 命令） -->
-                            <unzip src="${project.basedir}/llama-cpp/llama-cpp.zip"
+                            <!-- 解压 tar.gz 文件 -->
+                            <untar src="${project.basedir}/llama-cpp/llama-cpp.tar.gz"
                                 dest="${project.basedir}/llama-cpp/temp"
+                                compression="gzip"
                                 overwrite="true"/>
 
                             <!-- 复制 llama-server 和所有共享库 (.so 文件) -->
+                            <!-- 解压后的 tar.gz 包含 llama-server 可执行文件 -->
                             <copy todir="${project.basedir}/llama-cpp" flatten="true" includeemptydirs="false">
                                 <fileset dir="${project.basedir}/llama-cpp/temp">
                                     <include name="**/llama-server"/>
@@ -260,6 +262,7 @@
                                 </fileset>
                             </copy>
 
+                            <!-- 将 llama-server 重命名为 server（统一命名） -->
                             <move file="${project.basedir}/llama-cpp/llama-server"
                                 tofile="${project.basedir}/llama-cpp/server"
                                 failonerror="false"/>
@@ -277,7 +280,7 @@
 
                             <!-- 清理临时文件 -->
                             <delete dir="${project.basedir}/llama-cpp/temp"/>
-                            <delete file="${project.basedir}/llama-cpp/llama-cpp.zip"/>
+                            <delete file="${project.basedir}/llama-cpp/llama-cpp.tar.gz"/>
 
                             <echo message="[OK] llama.cpp installed successfully (Unix)"/>
                         </target>
@@ -469,9 +472,10 @@
                                 <argument>11435</argument>
                                 <argument>--host</argument>
                                 <argument>0.0.0.0</argument>
-                                <!-- GPU加速：-ngl 20 表示前20层使用GPU（如果支持OpenCL），其余层使用CPU -->
+                                <!-- Vulkan GPU加速：-ngl 10-20 表示前10-20层使用GPU（通过Vulkan API，支持Intel集成显卡） -->
+                                <!-- 如果GPU内存不足或遇到问题，可以减少到 -ngl 5 或改为 -ngl 0 使用纯CPU模式 -->
                                 <argument>-ngl</argument>
-                                <argument>20</argument>
+                                <argument>15</argument>
                             </arguments>
                             <async>true</async>
                             <asyncDestroyOnShutdown>true</asyncDestroyOnShutdown>

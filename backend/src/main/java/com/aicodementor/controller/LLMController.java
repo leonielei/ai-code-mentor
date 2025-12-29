@@ -10,6 +10,7 @@ import com.aicodementor.service.LLMService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,22 +41,15 @@ public class LLMController {
      * Teacher workflow: Generate exercise from natural language description
      */
     @PostMapping("/generate-exercise")
-    public ResponseEntity<?> generateExercise(@RequestBody ExerciseGenerationRequest request,
+    public ResponseEntity<ExerciseGenerationResponse> generateExercise(@RequestBody ExerciseGenerationRequest request,
                                                @RequestHeader(value = "Authorization", required = false) String authToken) {
-        try {
-            logger.info("Generating exercise from description");
-            
-            // In a real app, validate the teacher role from authToken
-            // For now, we'll skip authentication
-            
-            ExerciseGenerationResponse response = llmService.generateExercise(request);
-            return ResponseEntity.ok(response);
-            
-        } catch (Exception e) {
-            logger.error("Error generating exercise", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Erreur lors de la génération de l'exercice: " + e.getMessage());
-        }
+        logger.info("Generating exercise from description");
+        
+        // In a real app, validate the teacher role from authToken
+        // For now, we'll skip authentication
+        
+        ExerciseGenerationResponse response = llmService.generateExercise(request);
+        return ResponseEntity.ok(response);
     }
     
     /**
@@ -63,7 +57,7 @@ public class LLMController {
      */
     @PostMapping("/save-exercise")
     @Transactional
-    public ResponseEntity<?> saveExercise(@RequestBody ExerciseSaveRequest request,
+    public ResponseEntity<Exercise> saveExercise(@RequestBody ExerciseSaveRequest request,
                                           @RequestHeader(value = "Authorization", required = false) String authToken) {
         try {
             logger.info("Saving exercise - Title: {}, Description: {}, Difficulty: {}, Published: {}", 
@@ -74,19 +68,13 @@ public class LLMController {
             
             // Validate required fields
             if (request.title() == null || request.title().trim().isEmpty()) {
-                logger.warn("Save exercise failed: title is empty");
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body("Le titre de l'exercice est requis");
+                throw new IllegalArgumentException("Le titre de l'exercice est requis");
             }
             if (request.description() == null || request.description().trim().isEmpty()) {
-                logger.warn("Save exercise failed: description is empty");
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body("La description de l'exercice est requise");
+                throw new IllegalArgumentException("La description de l'exercice est requise");
             }
             if (request.difficulty() == null || request.difficulty().trim().isEmpty()) {
-                logger.warn("Save exercise failed: difficulty is empty");
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body("Le niveau de difficulté est requis");
+                throw new IllegalArgumentException("Le niveau de difficulté est requis");
             }
             
             // Find teacher (for demo, use first user with TEACHER role, or create one if none exists)
@@ -134,8 +122,7 @@ public class LLMController {
                 logger.debug("Parsed difficulty level: {}", difficultyLevel);
             } catch (IllegalArgumentException e) {
                 logger.error("Invalid difficulty level: {} - Error: {}", request.difficulty(), e.getMessage());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body("Niveau de difficulté invalide: " + request.difficulty() + ". Valeurs acceptées: L1, L2, L3, M1, M2");
+                throw new IllegalArgumentException("Niveau de difficulté invalide: " + request.difficulty() + ". Valeurs acceptées: L1, L2, L3, M1, M2");
             }
             
             // Create and populate exercise entity
@@ -185,19 +172,12 @@ public class LLMController {
             // Return the saved exercise with all fields
             return ResponseEntity.status(HttpStatus.CREATED).body(savedExercise);
             
-        } catch (Exception e) {
-            logger.error("Error saving exercise: {}", e.getMessage(), e);
-            e.printStackTrace();
-            String errorMessage = "Erreur lors de la sauvegarde de l'exercice";
-            if (e.getMessage() != null) {
-                errorMessage += ": " + e.getMessage();
-            }
-            // Include more details for debugging
-            if (e.getCause() != null) {
-                errorMessage += " (Cause: " + e.getCause().getMessage() + ")";
-            }
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(errorMessage);
+        } catch (DataIntegrityViolationException e) {
+            logger.error("Data integrity violation when saving exercise: {}", e.getMessage(), e);
+            throw e; // Let GlobalExceptionHandler handle it
+        } catch (IllegalArgumentException e) {
+            logger.error("Invalid argument when saving exercise: {}", e.getMessage(), e);
+            throw e; // Let GlobalExceptionHandler handle it
         }
     }
     
@@ -205,78 +185,35 @@ public class LLMController {
      * Student workflow: Execute code against test cases
      */
     @PostMapping("/execute-tests")
-    public ResponseEntity<?> executeTests(@RequestBody TestExecutionRequest request) {
-        try {
-            logger.info("Executing tests for exercise: {}", request.exerciseId());
-            
-            Optional<Exercise> exerciseOpt = exerciseRepository.findById(request.exerciseId());
-            if (exerciseOpt.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body("Exercice non trouvé");
-            }
-            
-            Exercise exercise = exerciseOpt.get();
-            TestExecutionResponse response = codeExecutionService.executeTests(exercise, request.code());
-            
-            return ResponseEntity.ok(response);
-            
-        } catch (Exception e) {
-            logger.error("Error executing tests", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Erreur lors de l'exécution des tests: " + e.getMessage());
+    public ResponseEntity<TestExecutionResponse> executeTests(@RequestBody TestExecutionRequest request) {
+        logger.info("Executing tests for exercise: {}", request.exerciseId());
+        
+        Optional<Exercise> exerciseOpt = exerciseRepository.findById(request.exerciseId());
+        if (exerciseOpt.isEmpty()) {
+            throw new IllegalArgumentException("Exercice non trouvé");
         }
+        
+        Exercise exercise = exerciseOpt.get();
+        TestExecutionResponse response = codeExecutionService.executeTests(exercise, request.code());
+        
+        return ResponseEntity.ok(response);
     }
     
     /**
      * Get a hint for a specific failed test
-     * Supports both standard and RAG-based hint generation
      */
     @PostMapping("/get-hint")
-    public ResponseEntity<?> getHint(@RequestBody HintRequest request) {
-        try {
-            logger.info("Generating hint for test: {}", request.testName());
-            
-            String hint;
-            
-            // 如果提供了 exerciseId 和 userQuestion，使用 RAG
-            if (request.exerciseId() != null) {
-                Optional<Exercise> exerciseOpt = exerciseRepository.findById(request.exerciseId());
-                if (exerciseOpt.isPresent()) {
-                    Exercise exercise = exerciseOpt.get();
-                    hint = llmService.generateHintWithRAG(
-                        request.userQuestion() != null ? request.userQuestion() : "Comment corriger cette erreur?",
-                        request.testName(),
-                        request.testCode(),
-                        request.studentCode(),
-                        request.errorMessage(),
-                        exercise
-                    );
-                } else {
-                    // Exercise not found, fall back to standard method
-                    hint = llmService.generateHint(
-                        request.testName(),
-                        request.testCode(),
-                        request.studentCode(),
-                        request.errorMessage()
-                    );
-                }
-            } else {
-                // 使用标准方法
-                hint = llmService.generateHint(
-                    request.testName(),
-                    request.testCode(),
-                    request.studentCode(),
-                    request.errorMessage()
-                );
-            }
-            
-            return ResponseEntity.ok(new HintResponse(hint != null && !hint.isEmpty() ? hint : "Relisez attentivement l'énoncé et vérifiez votre logique."));
-            
-        } catch (Exception e) {
-            logger.error("Error generating hint", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Erreur lors de la génération de l'indice: " + e.getMessage());
-        }
+    public ResponseEntity<HintResponse> getHint(@RequestBody HintRequest request) {
+        logger.info("Generating hint for test: {}", request.testName());
+        
+        String hint = llmService.generateHint(
+            request.testName(),
+            request.testCode(),
+            request.studentCode(),
+            request.errorMessage()
+        );
+        
+        return ResponseEntity.ok(new HintResponse(hint != null && !hint.isEmpty() ? hint : "Relisez attentivement l'énoncé et vérifiez votre logique."));
     }
 }
 

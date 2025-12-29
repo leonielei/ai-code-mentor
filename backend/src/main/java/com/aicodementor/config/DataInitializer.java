@@ -48,6 +48,22 @@ public class DataInitializer implements CommandLineRunner {
 
         logger.info("Teacher user ready: {}", teacher.getUsername());
 
+        // Create or get teacher2 user for concurrent testing
+        User teacher2 = userRepository.findByUsername("teacher2")
+                .orElseGet(() -> {
+                    User newTeacher2 = new User();
+                    newTeacher2.setUsername("teacher2");
+                    newTeacher2.setEmail("teacher2@demo.com");
+                    newTeacher2.setPassword("demo123");
+                    newTeacher2.setFullName("Prof. Test Concurrent");
+                    newTeacher2.setRole(User.UserRole.TEACHER);
+                    newTeacher2.setCreatedAt(LocalDateTime.now());
+                    newTeacher2.setUpdatedAt(LocalDateTime.now());
+                    return userRepository.save(newTeacher2);
+                });
+
+        logger.info("Teacher2 user ready: {} (for concurrent testing)", teacher2.getUsername());
+
         // Create test exercises if they don't exist
         if (exerciseRepository.count() == 0) {
             createTestExercises(teacher);

@@ -10,6 +10,8 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -41,81 +43,63 @@ public class SubmissionController {
     
     @GetMapping
     @Transactional(readOnly = true)
-    public ResponseEntity<?> getAllSubmissions(
+    public ResponseEntity<Page<Submission>> getAllSubmissions(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
-        try {
-            Pageable pageable = PageRequest.of(page, size);
-            Page<Submission> submissions = submissionRepository.findAll(pageable);
-            
-            // Ensure lazy-loaded associations are initialized
-            submissions.getContent().forEach(sub -> {
-                if (sub.getUser() != null) {
-                    Hibernate.initialize(sub.getUser());
-                    sub.getUser().getId();
-                    sub.getUser().getUsername();
-                }
-                if (sub.getExercise() != null) {
-                    Hibernate.initialize(sub.getExercise());
-                    sub.getExercise().getId();
-                    sub.getExercise().getTitle();
-                }
-            });
-            
-            return ResponseEntity.ok(submissions);
-        } catch (Exception e) {
-            System.err.println("Error in getAllSubmissions: " + e.getMessage());
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Erreur lors de la récupération des soumissions: " + 
-                        (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
-        }
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Submission> submissions = submissionRepository.findAll(pageable);
+        
+        // Ensure lazy-loaded associations are initialized
+        submissions.getContent().forEach(sub -> {
+            if (sub.getUser() != null) {
+                Hibernate.initialize(sub.getUser());
+                sub.getUser().getId();
+                sub.getUser().getUsername();
+            }
+            if (sub.getExercise() != null) {
+                Hibernate.initialize(sub.getExercise());
+                sub.getExercise().getId();
+                sub.getExercise().getTitle();
+            }
+        });
+        
+        return ResponseEntity.ok(submissions);
     }
     
     @GetMapping("/{id}")
     @Transactional(readOnly = true)
-    public ResponseEntity<?> getSubmissionById(@PathVariable Long id) {
-        try {
-            Optional<Submission> submissionOpt = submissionRepository.findById(id);
-            if (submissionOpt.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
-            
-            Submission submission = submissionOpt.get();
-            
-            // Ensure lazy-loaded associations are initialized
-            if (submission.getUser() != null) {
-                Hibernate.initialize(submission.getUser());
-                submission.getUser().getId();
-                submission.getUser().getUsername();
-            }
-            if (submission.getExercise() != null) {
-                Hibernate.initialize(submission.getExercise());
-                submission.getExercise().getId();
-                submission.getExercise().getTitle();
-            }
-            
-            return ResponseEntity.ok(submission);
-        } catch (Exception e) {
-            System.err.println("Error in getSubmissionById: " + e.getMessage());
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Erreur lors de la récupération de la soumission: " + 
-                        (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+    public ResponseEntity<Submission> getSubmissionById(@PathVariable Long id) {
+        Optional<Submission> submissionOpt = submissionRepository.findById(id);
+        if (submissionOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
         }
+        
+        Submission submission = submissionOpt.get();
+        
+        // Ensure lazy-loaded associations are initialized
+        if (submission.getUser() != null) {
+            Hibernate.initialize(submission.getUser());
+            submission.getUser().getId();
+            submission.getUser().getUsername();
+        }
+        if (submission.getExercise() != null) {
+            Hibernate.initialize(submission.getExercise());
+            submission.getExercise().getId();
+            submission.getExercise().getTitle();
+        }
+        
+        return ResponseEntity.ok(submission);
     }
     
     @PostMapping
-    public ResponseEntity<?> createSubmission(@Valid @RequestBody Submission submission) {
+    public ResponseEntity<Submission> createSubmission(@Valid @RequestBody Submission submission) {
         try {
             // Verify user and exercise exist
             if (submission.getUser() == null || submission.getUser().getId() == null) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("User ID is required");
+                throw new IllegalArgumentException("User ID is required");
             }
             if (submission.getExercise() == null || submission.getExercise().getId() == null) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("Exercise ID is required");
+                throw new IllegalArgumentException("Exercise ID is required");
             }
             
             Optional<User> userOpt = userRepository.findById(submission.getUser().getId());
@@ -154,8 +138,8 @@ public class SubmissionController {
                 try {
                     user = userRepository.save(defaultUser);
                     logger.info("Created default student user with ID: {}, username: {}", user.getId(), username);
-                } catch (Exception e) {
-                    logger.error("Failed to create default student user: {}", e.getMessage(), e);
+                } catch (DataIntegrityViolationException e) {
+                    logger.error("Data integrity violation when creating default student user: {}", e.getMessage(), e);
                     // Try to find existing user by username as fallback
                     Optional<User> existingUser = userRepository.findByUsername(baseUsername);
                     if (existingUser.isPresent()) {
@@ -170,8 +154,7 @@ public class SubmissionController {
             }
             
             if (exercise.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("Exercise not found with ID: " + submission.getExercise().getId());
+                throw new IllegalArgumentException("Exercise not found with ID: " + submission.getExercise().getId());
             }
             
             submission.setUser(user);
@@ -184,37 +167,30 @@ public class SubmissionController {
             
             // Ensure code is not null
             if (submission.getCode() == null || submission.getCode().trim().isEmpty()) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("Code cannot be empty");
+                throw new IllegalArgumentException("Code cannot be empty");
             }
             
             Submission savedSubmission = submissionRepository.save(submission);
             logger.info("Submission created successfully with ID: {} for user: {}, exercise: {}", 
                 savedSubmission.getId(), user.getId(), exercise.get().getId());
             return ResponseEntity.status(HttpStatus.CREATED).body(savedSubmission);
-        } catch (Exception e) {
-            logger.error("Error creating submission: {}", e.getMessage(), e);
-            e.printStackTrace();
-            String errorMessage = "Error creating submission: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-            // Check for specific constraint violations
-            if (e.getMessage() != null && e.getMessage().contains("constraint")) {
-                errorMessage = "Database constraint violation: " + e.getMessage();
-            }
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(errorMessage);
+        } catch (DataIntegrityViolationException e) {
+            logger.error("Data integrity violation when creating submission: {}", e.getMessage(), e);
+            throw e; // Let GlobalExceptionHandler handle it
+        } catch (jakarta.validation.ConstraintViolationException e) {
+            logger.error("Validation constraint violation when creating submission: {}", e.getMessage(), e);
+            throw e; // Let GlobalExceptionHandler handle it
         }
     }
     
     @PutMapping("/{id}")
     @Transactional
-    public ResponseEntity<?> updateSubmission(@PathVariable Long id, @Valid @RequestBody Submission submissionDetails) {
+    public ResponseEntity<Submission> updateSubmission(@PathVariable Long id, @Valid @RequestBody Submission submissionDetails) {
         try {
             Optional<Submission> optionalSubmission = submissionRepository.findById(id);
             
             if (optionalSubmission.isEmpty()) {
-                logger.warn("Submission not found for update: {}", id);
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body("Submission not found with ID: " + id);
+                throw new IllegalArgumentException("Submission not found with ID: " + id);
             }
             
             Submission submission = optionalSubmission.get();
@@ -222,9 +198,7 @@ public class SubmissionController {
             // Validate code is not empty
             if (submissionDetails.getCode() != null) {
                 if (submissionDetails.getCode().trim().isEmpty()) {
-                    logger.warn("Attempted to update submission {} with empty code", id);
-                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body("Code cannot be empty");
+                    throw new IllegalArgumentException("Code cannot be empty");
                 }
                 submission.setCode(submissionDetails.getCode().trim());
                 logger.debug("Updated submission {} code, length: {}", id, submission.getCode().length());
@@ -261,12 +235,12 @@ public class SubmissionController {
                 updatedSubmission.getCode() != null ? updatedSubmission.getCode().length() : 0);
             
             return ResponseEntity.ok(updatedSubmission);
-        } catch (Exception e) {
-            logger.error("Error updating submission {}: {}", id, e.getMessage(), e);
-            e.printStackTrace();
-            String errorMessage = "Error updating submission: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(errorMessage);
+        } catch (DataIntegrityViolationException e) {
+            logger.error("Data integrity violation when updating submission {}: {}", id, e.getMessage(), e);
+            throw e; // Let GlobalExceptionHandler handle it
+        } catch (jakarta.validation.ConstraintViolationException e) {
+            logger.error("Validation constraint violation when updating submission {}: {}", id, e.getMessage(), e);
+            throw e; // Let GlobalExceptionHandler handle it
         }
     }
     
@@ -282,71 +256,55 @@ public class SubmissionController {
     
     @GetMapping("/user/{userId}")
     @Transactional(readOnly = true)
-    public ResponseEntity<?> getSubmissionsByUser(@PathVariable Long userId) {
-        try {
-            Optional<User> user = userRepository.findById(userId);
-            if (user.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
-            
-            List<Submission> submissions = submissionRepository.findByUser(user.get());
-            
-            // Ensure lazy-loaded associations are initialized
-            submissions.forEach(sub -> {
-                if (sub.getExercise() != null) {
-                    Hibernate.initialize(sub.getExercise());
-                    sub.getExercise().getId();
-                    sub.getExercise().getTitle();
-                }
-            });
-            
-            return ResponseEntity.ok(submissions);
-        } catch (Exception e) {
-            System.err.println("Error in getSubmissionsByUser: " + e.getMessage());
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Erreur lors de la récupération des soumissions: " + 
-                        (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+    public ResponseEntity<List<Submission>> getSubmissionsByUser(@PathVariable Long userId) {
+        Optional<User> user = userRepository.findById(userId);
+        if (user.isEmpty()) {
+            return ResponseEntity.notFound().build();
         }
+        
+        List<Submission> submissions = submissionRepository.findByUser(user.get());
+        
+        // Ensure lazy-loaded associations are initialized
+        submissions.forEach(sub -> {
+            if (sub.getExercise() != null) {
+                Hibernate.initialize(sub.getExercise());
+                sub.getExercise().getId();
+                sub.getExercise().getTitle();
+            }
+        });
+        
+        return ResponseEntity.ok(submissions);
     }
     
     @GetMapping("/exercise/{exerciseId}")
     @Transactional(readOnly = true)
-    public ResponseEntity<?> getSubmissionsByExercise(
+    public ResponseEntity<Page<Submission>> getSubmissionsByExercise(
             @PathVariable Long exerciseId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
-        try {
-            Optional<Exercise> exercise = exerciseRepository.findById(exerciseId);
-            if (exercise.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
-            
-            Pageable pageable = PageRequest.of(page, size);
-            Page<Submission> submissions = submissionRepository.findByExerciseOrderByCreatedAtDesc(exercise.get(), pageable);
-            
-            // Ensure lazy-loaded associations are initialized
-            submissions.getContent().forEach(sub -> {
-                if (sub.getUser() != null) {
-                    Hibernate.initialize(sub.getUser());
-                    sub.getUser().getId();
-                    sub.getUser().getUsername();
-                }
-            });
-            
-            return ResponseEntity.ok(submissions);
-        } catch (Exception e) {
-            System.err.println("Error in getSubmissionsByExercise: " + e.getMessage());
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Erreur lors de la récupération des soumissions: " + 
-                        (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+        Optional<Exercise> exercise = exerciseRepository.findById(exerciseId);
+        if (exercise.isEmpty()) {
+            return ResponseEntity.notFound().build();
         }
+        
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Submission> submissions = submissionRepository.findByExerciseOrderByCreatedAtDesc(exercise.get(), pageable);
+        
+        // Ensure lazy-loaded associations are initialized
+        submissions.getContent().forEach(sub -> {
+            if (sub.getUser() != null) {
+                Hibernate.initialize(sub.getUser());
+                sub.getUser().getId();
+                sub.getUser().getUsername();
+            }
+        });
+        
+        return ResponseEntity.ok(submissions);
     }
     
     @GetMapping("/user/{userId}/exercise/{exerciseId}")
     @Transactional(readOnly = true)
-    public ResponseEntity<?> getSubmissionsByUserAndExercise(
+    public ResponseEntity<List<Submission>> getSubmissionsByUserAndExercise(
             @PathVariable Long userId,
             @PathVariable Long exerciseId) {
         try {
@@ -371,9 +329,8 @@ public class SubmissionController {
             });
             
             return ResponseEntity.ok(submissions);
-        } catch (Exception e) {
-            logger.error("Error in getSubmissionsByUserAndExercise: {}", e.getMessage(), e);
-            e.printStackTrace();
+        } catch (DataAccessException e) {
+            logger.error("Data access error in getSubmissionsByUserAndExercise: {}", e.getMessage(), e);
             // Return empty list on error instead of 500, for better UX
             return ResponseEntity.ok(java.util.Collections.emptyList());
         }

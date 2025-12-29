@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -31,7 +32,7 @@ public class UserController {
     }
     
     @GetMapping("/{id}")
-    public ResponseEntity<?> getUserById(@PathVariable Long id) {
+    public ResponseEntity<User> getUserById(@PathVariable Long id) {
         Optional<User> userOpt = userRepository.findById(id);
         
         // If user doesn't exist, create a default student user
@@ -66,16 +67,15 @@ public class UserController {
                 User savedUser = userRepository.save(defaultUser);
                 logger.info("Created default student user with ID: {}, username: {}", savedUser.getId(), username);
                 return ResponseEntity.ok(savedUser);
-            } catch (Exception e) {
-                logger.error("Failed to create default student user: {}", e.getMessage(), e);
+            } catch (DataIntegrityViolationException e) {
+                logger.error("Data integrity violation when creating default student user: {}", e.getMessage(), e);
                 // Try to find existing user by username as fallback
                 Optional<User> existingUser = userRepository.findByUsername(baseUsername);
                 if (existingUser.isPresent()) {
                     logger.info("Using existing user with ID: {}, username: {}", existingUser.get().getId(), existingUser.get().getUsername());
                     return ResponseEntity.ok(existingUser.get());
                 } else {
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body("Failed to create user: " + e.getMessage());
+                    throw new RuntimeException("Failed to create user: " + e.getMessage(), e);
                 }
             }
         }
@@ -96,7 +96,11 @@ public class UserController {
             
             User savedUser = userRepository.save(user);
             return ResponseEntity.status(HttpStatus.CREATED).body(savedUser);
-        } catch (Exception e) {
+        } catch (DataIntegrityViolationException e) {
+            logger.error("Data integrity violation when creating user: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        } catch (jakarta.validation.ConstraintViolationException e) {
+            logger.error("Validation constraint violation when creating user: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         }
     }

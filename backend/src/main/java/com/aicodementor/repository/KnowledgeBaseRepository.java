@@ -10,17 +10,17 @@ import java.util.List;
 public interface KnowledgeBaseRepository extends JpaRepository<KnowledgeBase, Long> {
     
     /**
-     * 根据练习ID查找知识库条目
+     * Find knowledge base entries by exercise ID
      */
     List<KnowledgeBase> findByExerciseId(Long exerciseId);
     
     /**
-     * 根据内容类型查找
+     * Find knowledge base entries by content type
      */
     List<KnowledgeBase> findByContentType(String contentType);
     
     /**
-     * 根据练习ID和内容类型查找
+     * Find knowledge base entries by exercise ID and content type
      */
     List<KnowledgeBase> findByExerciseIdAndContentType(Long exerciseId, String contentType);
 }

@@ -1,302 +1,416 @@
 # 🚀 AICodeMentor
 
-Plateforme d'apprentissage de programmation pilotée par l'IA - Génération et évaluation automatiques d'exercices de programmation avec LLM local
+Plateforme d'apprentissage de programmation pilotée par l'IA - Génération et évaluation automatiques d'exercices de programmation avec LLM local.
 
-## ✨ Caractéristiques principales
+## 📋 Table des matières
 
-### 👨‍🏫 Fonctionnalités pour enseignants
-- 🤖 **Génération d'exercices par IA** - Décrivez en langage naturel, l'IA génère automatiquement un exercice complet
-- ✏️ **Éditeur visuel** - Éditeur Monaco pour modifier le code et les tests
-- 📊 **Gestion des étudiants** - Visualiser les soumissions et statistiques
+1. [Présentation](#-présentation)
+2. [Fonctionnalités](#-fonctionnalités)
+3. [Architecture technique](#-architecture-technique)
+4. [Prérequis](#-prérequis)
+5. [Installation](#-installation)
+6. [Démarrage](#-démarrage)
+7. [Configuration](#-configuration)
+8. [Utilisation](#-utilisation)
+9. [Dépannage](#-dépannage)
+10. [Architecture du code](#-architecture-du-code)
+11. [Développement](#-développement)
 
-### 👨‍🎓 Fonctionnalités pour étudiants
-- 💻 **Édition de code en ligne** - Éditeur Monaco avec support multi-langages
-- ✅ **Tests automatiques** - Exécution de tests unitaires en temps réel
-- 💡 **Indices intelligents** - Indices personnalisés générés par IA
+---
 
-## 🛠️ Stack technologique
+## 🎯 Présentation
+
+AICodeMentor est une plateforme éducative qui utilise l'intelligence artificielle pour générer automatiquement des exercices de programmation et fournir des retours personnalisés aux étudiants. Le système utilise un modèle de langage local (llama.cpp) pour fonctionner entièrement hors ligne, garantissant la confidentialité des données.
+
+### Objectifs
+
+- **Pour les enseignants** : Créer rapidement des exercices de programmation de qualité
+- **Pour les étudiants** : Pratiquer la programmation avec des retours instantanés et des indices intelligents
+- **Pour les institutions** : Solution open-source, locale et respectueuse de la vie privée
+
+---
+
+## ✨ Fonctionnalités
+
+### 👨‍🏫 Pour les enseignants
+
+- **🤖 Génération d'exercices par IA**
+  - Description en langage naturel → Exercice complet généré automatiquement
+  - Inclut : énoncé, code de départ, tests unitaires, solution, exemples
+
+- **✏️ Éditeur visuel**
+  - Éditeur Monaco (même moteur que VS Code)
+  - Modification du code généré et des tests
+  - Prévisualisation en temps réel
+
+- **📊 Gestion des étudiants**
+  - Visualisation des soumissions
+  - Statistiques de performance
+  - Suivi des progrès
+
+- **📝 Publication d'exercices**
+  - Contrôle de la visibilité (publié/brouillon)
+  - Organisation par thème et difficulté
+  - Recherche et filtrage
+
+### 👨‍🎓 Pour les étudiants
+
+- **💻 Édition de code en ligne**
+  - Éditeur Monaco avec coloration syntaxique
+  - Support multi-langages (actuellement Java)
+  - Auto-complétion et validation
+
+- **✅ Tests automatiques**
+  - Exécution de tests unitaires en temps réel
+  - Retour immédiat sur les résultats
+  - Affichage des erreurs de compilation et d'exécution
+
+- **💡 Indices intelligents**
+  - Indices personnalisés générés par IA
+  - Analyse du code de l'étudiant
+  - Suggestions contextuelles sans révéler la solution
+
+---
+
+## 🏗️ Architecture technique
 
 ### Frontend
-- Vue.js 3 + Vite
-- Bootstrap 5
-- Monaco Editor
-- Vue Router 4
-- Axios
+
+| Technologie | Version | Rôle |
+|------------|---------|------|
+| Vue.js | 3.4+ | Framework frontend |
+| Vite | 5.2+ | Build tool et serveur de développement |
+| Bootstrap | 5.3+ | Framework CSS |
+| Monaco Editor | 0.45+ | Éditeur de code |
+| Vue Router | 4.2+ | Routage |
+| Axios | 1.6+ | Client HTTP |
 
 ### Backend
-- Spring Boot 3.2.0
-- Spring Data JPA
-- H2 Database (en mémoire)
-- LangChain4j
-- Maven
 
-### IA
-- llama.cpp (exécution locale)
-- Modèle deepseek-coder-6.7b
-- Compatible API LocalAI
+| Technologie | Version | Rôle |
+|------------|---------|------|
+| Spring Boot | 3.2+ | Framework backend |
+| Spring Data JPA | - | Accès aux données |
+| H2 Database | - | Base de données (fichier) |
+| JUnit 5 | - | Exécution de tests |
+| Maven | 3.6+ | Gestion des dépendances |
 
-## 📦 Démarrage rapide
+### Intelligence artificielle
 
-### Prérequis
+| Composant | Description |
+|-----------|-------------|
+| llama.cpp | Serveur d'inférence local |
+| deepseek-coder-6.7b | Modèle de langage spécialisé en code |
+| Format | GGUF (quantisé Q2_K, ~2.5GB) |
 
-- **Java 25** (必须安装并设置 JAVA_HOME 环境变量)
-- Node.js 18+
-- Maven 3.6+
+### Ports des services
 
-#### 配置 Java 25
+| Service | Port | URL |
+|---------|------|-----|
+| Frontend | 3000 | http://localhost:3000 |
+| Backend API | 8080 | http://localhost:8080 |
+| llama.cpp | 11435 | http://localhost:11435 |
 
-1. **下载并安装 Java 25 JDK**
-   - 从 Oracle 或 OpenJDK 官网下载 Java 25
-   - 安装到系统（例如：`C:\Program Files\Java\jdk-25` 或 `/usr/lib/jvm/java-25`）
+---
 
-2. **设置 JAVA_HOME 环境变量**
-   
-   **Windows:**
-   ```powershell
-   # 临时设置（当前会话）
-   $env:JAVA_HOME = "C:\Program Files\Java\jdk-25"
-   
-   # 永久设置（系统环境变量）
-   # 1. 打开"系统属性" -> "高级" -> "环境变量"
-   # 2. 新建系统变量：JAVA_HOME = C:\Program Files\Java\jdk-25
-   # 3. 编辑 Path 变量，添加：%JAVA_HOME%\bin
-   ```
-   
-   **Linux/Mac:**
-   ```bash
-   # 临时设置（当前会话）
-   export JAVA_HOME=/usr/lib/jvm/java-25
-   export PATH=$JAVA_HOME/bin:$PATH
-   
-   # 永久设置（添加到 ~/.bashrc 或 ~/.zshrc）
-   echo 'export JAVA_HOME=/usr/lib/jvm/java-25' >> ~/.bashrc
-   echo 'export PATH=$JAVA_HOME/bin:$PATH' >> ~/.bashrc
-   source ~/.bashrc
-   ```
+## 📋 Prérequis
 
-3. **验证安装**
-   ```bash
-   java -version  # 应该显示 java version "25"
-   javac -version # 应该显示 javac 25
-   echo $JAVA_HOME # 应该显示 Java 25 的安装路径
-   ```
+### Logiciels requis
 
-### 1️⃣ Installer llama.cpp et le modèle
+1. **Java 25 JDK** (obligatoire)
+   - Télécharger depuis [Oracle](https://www.oracle.com/java/technologies/downloads/) ou [OpenJDK](https://jdk.java.net/)
+   - **Important** : Configurer la variable d'environnement `JAVA_HOME`
+
+2. **Node.js 18+** (pour le frontend)
+   - Télécharger depuis [nodejs.org](https://nodejs.org/)
+
+3. **Maven 3.6+** (pour le backend)
+   - Télécharger depuis [maven.apache.org](https://maven.apache.org/download.cgi)
+
+### Configuration de Java 25
+
+#### Windows
+
+```powershell
+# 1. Définir JAVA_HOME (session actuelle)
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-25"
+
+# 2. Ajouter au PATH
+$env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
+
+# 3. Vérifier l'installation
+java -version
+javac -version
+```
+
+**Configuration permanente** :
+1. Ouvrir "Paramètres système" → "Variables d'environnement"
+2. Créer une variable système : `JAVA_HOME = C:\Program Files\Java\jdk-25`
+3. Modifier `Path` : ajouter `%JAVA_HOME%\bin`
+
+#### Linux / macOS
 
 ```bash
+# 1. Définir JAVA_HOME (session actuelle)
+export JAVA_HOME=/usr/lib/jvm/java-25
+export PATH=$JAVA_HOME/bin:$PATH
+
+# 2. Vérifier l'installation
+java -version
+javac -version
+```
+
+**Configuration permanente** :
+```bash
+# Ajouter à ~/.bashrc ou ~/.zshrc
+echo 'export JAVA_HOME=/usr/lib/jvm/java-25' >> ~/.bashrc
+echo 'export PATH=$JAVA_HOME/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+## 📦 Installation
+
+### Étape 1 : Cloner le projet
+
+```bash
+git clone <repository-url>
+cd ai-code-mentor-main
+```
+
+### Étape 2 : Installer les dépendances frontend
+
+```bash
+npm install
+```
+
+### Étape 3 : Télécharger le modèle IA
+
+Le modèle sera téléchargé automatiquement lors de la première compilation :
+
+```bash
+cd backend
 mvn process-classes
 ```
 
-Cela téléchargera environ 4 Go du modèle CodeLlama, ce qui prendra 10-20 minutes.
+**Note** : Le téléchargement prend environ 10-20 minutes (modèle de ~2.5GB).
 
-### 2️⃣ Lancer les services
+Le modèle sera placé dans : `llama-cpp/models/deepseek-coder-6.7b-instruct.Q2_K.gguf`
 
-**选项 A: 使用脚本一键启动（CPU 模式）**
-```bash
-# Windows
+---
+
+## 🚀 Démarrage
+
+### Option A : Démarrage automatique (recommandé pour débutants)
+
+**Windows** :
+```powershell
 .\start-all.bat
+```
 
-# Linux/Mac
+**Linux / macOS** :
+```bash
 ./start-all.sh
 ```
 
-**选项 B: 手动启动（推荐 GPU 用户）**
+Cette commande démarre automatiquement :
+1. llama.cpp (mode CPU)
+2. Backend Spring Boot
+3. Frontend Vue.js
 
-1. **启动 llama.cpp (可选，如果使用 GPU 请先手动启动):**
-   ```bash
-   # 见下方 "Accélération GPU" 部分获取详细命令
-   cd llama-cpp
-   .\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 35 -c 4096 --port 11435
-   ```
+Attendre que tous les services soient prêts, puis accéder à : **http://localhost:3000**
 
-2. **启动后端:**
-   ```bash
-   cd backend
-   # 确保 JAVA_HOME 指向 Java 25
-   mvn spring-boot:run
-   ```
+### Option B : Démarrage manuel (recommandé pour GPU)
 
-3. **启动前端:**
-   ```bash
-   npm run dev
-   ```
+#### 1. Démarrer llama.cpp
 
-等待服务启动后，访问：**http://localhost:3000**
-
-## 📋 Ports des services
-
-| Service | Port | Description |
-|---------|------|-------------|
-| Frontend | 3000 | Serveur de développement Vue.js |
-| Backend | 8080 | API Spring Boot |
-| IA | 11435 | Serveur llama.cpp |
-
-> **💡 Note:** 默认情况下，`start-all.bat` 会启动 CPU 模式的 llama.cpp。如果您有 NVIDIA GPU 并想使用 GPU 加速，请先手动启动 GPU 版本的 llama-server（见下方"Accélération GPU"部分），然后再启动后端和前端。
-
-## 📚 Structure du projet
-
-```
-uni-preset-vue-vite/
-├── backend/                    # Backend Spring Boot
-│   ├── src/main/java/
-│   │   └── com/aicodementor/
-│   │       ├── controller/     # Contrôleurs REST API
-│   │       ├── service/        # Logique métier et service LLM
-│   │       ├── entity/         # Entités JPA
-│   │       ├── repository/     # Couche d'accès aux données
-│   │       └── dto/            # Objets de transfert de données
-│   └── pom.xml
-├── src/                        # Frontend Vue.js
-│   ├── views/                  # Composants de page
-│   ├── components/             # Composants réutilisables
-│   ├── router/                 # Configuration de routage
-│   ├── services/               # Services API
-│   └── assets/                 # Ressources statiques
-├── llama-cpp/                  # Binaires et modèles llama.cpp
-│   ├── server.exe
-│   └── models/
-│       └── codellama-7b-instruct.Q4_K_M.gguf
-├── start-all.bat              # Script de démarrage en un clic
-├── stop-all.bat               # Script d'arrêt en un clic
-├── install-llamacpp.bat       # Script d'installation LLM
-└── package.json
-
-```
-
-## ⚡ Performances
-
-### Mode CPU (actuel)
-- Génération d'exercices : 30 secondes - 2 minutes
-- Génération d'indices : 10-30 secondes
-- Vitesse : ~5.68 tokens/seconde
-
-### Accélération GPU (optionnel)
-Si vous avez une carte graphique NVIDIA, téléchargez la version CUDA de llama.cpp pour une accélération 10-50x !
-
-#### 手动启动 llama.cpp avec GPU
-
-**Windows (PowerShell 或 CMD):**
-```powershell
-# 进入 llama-cpp 目录
+**Mode CPU** (par défaut) :
+```bash
 cd llama-cpp
+# Windows
+.\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
 
-# 启动 server.exe 使用 GPU (CUDA)
-# 确保使用支持 CUDA 的版本 (ggml-cuda.dll 必须存在)
-.\server.exe `
-  -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf `
-  -ngl 35 `
-  -c 4096 `
-  -t 4 `
-  -b 512 `
-  -n 2048 `
-  --port 11435 `
-  --host 0.0.0.0 `
-  --cont-batching
+# Linux / macOS
+./server -m models/deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
+```
 
-# 或者使用更简单的命令（推荐）
+**Mode GPU** (voir section [Accélération GPU](#-accélération-gpu) pour les détails)
+
+#### 2. Démarrer le backend
+
+```bash
+cd backend
+mvn spring-boot:run
+```
+
+Vérifier que le backend est prêt : http://localhost:8080/api/exercises
+
+#### 3. Démarrer le frontend
+
+```bash
+npm run dev
+```
+
+Accéder à : **http://localhost:3000**
+
+---
+
+## ⚙️ Configuration
+
+### Configuration du backend
+
+Fichier : `backend/src/main/resources/application.yml`
+
+```yaml
+# Port du serveur
+server:
+  port: 8080
+
+# Base de données H2
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/testdb
+    username: sa
+    password: password
+  
+  # Console H2 (développement)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+# Configuration LLM
+llm:
+  provider: llamacpp
+  llamacpp:
+    base-url: http://localhost:11435
+```
+
+### Configuration du frontend
+
+Fichier : `vite.config.js`
+
+Le proxy est configuré pour rediriger `/api` vers `http://localhost:8080` en développement.
+
+---
+
+## ⚡ Accélération GPU
+
+### NVIDIA GPU (CUDA)
+
+**Prérequis** :
+- NVIDIA GPU avec support CUDA
+- CUDA Toolkit installé
+- Version CUDA de llama.cpp
+
+**Démarrage** :
+```bash
+cd llama-cpp
 .\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 35 -c 4096 --port 11435
 ```
 
-**Linux/Mac:**
+**Paramètres recommandés** :
+- `-ngl 35` : 35 couches sur GPU (ajuster selon la mémoire GPU)
+- `-c 4096` : Taille du contexte
+- `-t 4` : Threads CPU (pour les couches restantes)
+
+**Vérification** :
 ```bash
-# 进入 llama-cpp 目录
+nvidia-smi  # Vérifier l'utilisation GPU
+```
+
+### Intel GPU intégré (Vulkan)
+
+**Prérequis** :
+- Pilotes Vulkan installés
+- Version Vulkan de llama.cpp
+
+**Démarrage** :
+```bash
 cd llama-cpp
-
-# 启动 server 使用 GPU (CUDA)
-./server \
-  -m models/deepseek-coder-6.7b-instruct.Q2_K.gguf \
-  -ngl 35 \
-  -c 4096 \
-  -t 4 \
-  -b 512 \
-  -n 2048 \
-  --port 11435 \
-  --host 0.0.0.0 \
-  --cont-batching
-
-# 或者使用更简单的命令（推荐）
-./server -m models/deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 35 -c 4096 --port 11435
+./server -m models/deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 15 -c 4096 -t 4 --port 11435
 ```
 
-**参数说明:**
-- `-m`: 模型文件路径
-- `-ngl`: 在 GPU 上运行的层数（0 = 仅 CPU，20-35 = 大部分在 GPU，取决于 GPU 内存）
-- `-c`: 上下文窗口大小（4096 或 8192）
-- `-t`: CPU 线程数（如果部分层在 CPU 上运行）
-- `-b`: 批处理大小（512 或更高，取决于 GPU 内存）
-- `-n`: 最大生成 token 数（2048 或更高）
-- `--port`: 服务端口（默认 11435，**注意：使用 `--port` 而不是 `-p`**）
-- `--host`: 绑定地址（0.0.0.0 允许外部访问）
-- `--cont-batching`: 启用连续批处理（提高性能）
+**Paramètres recommandés** :
+- `-ngl 15` : 15 couches sur GPU Vulkan
+- Réduire à `-ngl 10` ou `-ngl 5` si mémoire insuffisante
 
-**⚠️ 重要提示:**
-- 使用 `server.exe` (Windows) 或 `server` (Linux/Mac)，而不是 `llama-server.exe`
-- 端口参数是 `--port`，**不是** `-p`
-- GPU 层数参数是 `-ngl`，**不是** `--gpu-layers`
+### Paramètres de performance
 
-**检查 GPU 是否可用:**
-```bash
-# Windows
-.\server.exe --help | findstr ngl
+| Mode | Vitesse | Utilisation |
+|------|---------|-------------|
+| CPU | ~5-6 tokens/s | 100% CPU |
+| NVIDIA GPU | ~20-50 tokens/s | GPU + CPU partiel |
+| Intel Vulkan | ~8-15 tokens/s | GPU intégré + CPU |
 
-# Linux/Mac
-./server --help | grep ngl
-```
+---
 
-**查看所有可用参数:**
-```bash
-# Windows
-.\server.exe --help
-
-# Linux/Mac
-./server --help
-```
-
-**验证 GPU 加速:**
-启动后，检查日志中是否有类似信息：
-```
-llama_model_load_internal: using CUDA for GPU acceleration
-llama_model_load_internal: n_gpu_layers = 35
-```
-
-**注意事项:**
-- 确保安装了 NVIDIA CUDA Toolkit 和 cuDNN
-- 确保 `ggml-cuda.dll` (Windows) 或 `libggml-cuda.so` (Linux) 存在于 llama-cpp 目录
-- 如果 GPU 内存不足，减少 `--gpu-layers` 参数
-- 如果遇到错误，尝试 `--gpu-layers 0` 使用纯 CPU 模式
-
-## 🎯 Flux d'utilisation
+## 🎯 Utilisation
 
 ### Workflow enseignant
 
-1. Se connecter au système
-2. Cliquer sur "Créer un exercice"
-3. Décrire les exigences de l'exercice en langage naturel
-4. L'IA génère un exercice complet (énoncé, code, tests, solution)
-5. Examiner et publier
+1. **Créer un exercice**
+   - Accéder à "Créer un exercice"
+   - Décrire l'exercice en langage naturel (ex: "Écrire une fonction qui inverse une chaîne")
+   - L'IA génère automatiquement :
+     - Énoncé détaillé
+     - Code de départ
+     - Tests unitaires
+     - Solution
+     - Exemples
+
+2. **Modifier et personnaliser**
+   - Utiliser l'éditeur pour ajuster le code
+   - Modifier les tests si nécessaire
+   - Ajouter des indices ou des explications
+
+3. **Publier**
+   - Activer le statut "Publié"
+   - L'exercice devient visible pour les étudiants
 
 ### Workflow étudiant
 
-1. Se connecter au système
-2. Parcourir les exercices disponibles
-3. Écrire du code dans l'éditeur Monaco
-4. Soumettre et exécuter automatiquement les tests
-5. Consulter les résultats et indices générés par IA
+1. **Parcourir les exercices**
+   - Consulter la liste des exercices publiés
+   - Filtrer par thème ou difficulté
+   - Sélectionner un exercice
+
+2. **Résoudre l'exercice**
+   - Lire l'énoncé et les exemples
+   - Écrire le code dans l'éditeur
+   - Cliquer sur "Exécuter les tests"
+
+3. **Obtenir de l'aide**
+   - Si les tests échouent, consulter les erreurs
+   - Demander un indice (généré automatiquement par IA)
+   - Itérer jusqu'à résolution
+
+---
 
 ## 🐛 Dépannage
 
-### Port occupé
+### Problème : Port déjà utilisé
+
+**Solution** :
 ```bash
-.\stop-all.bat
-# Attendre 5 secondes
+# Arrêter tous les services
+.\stop-all.bat  # Windows
+./stop-all.sh   # Linux/Mac
+
+# Attendre 5 secondes, puis redémarrer
 .\start-all.bat
 ```
 
-### Frontend vide
-Appuyer sur F12 pour voir les erreurs dans la console du navigateur
+### Problème : Frontend vide ou erreurs
 
-### Échec de génération IA
-Vérifier que llama.cpp est en cours d'exécution :
+1. Ouvrir la console du navigateur (F12)
+2. Vérifier les erreurs dans l'onglet "Console"
+3. Vérifier que le backend est accessible : http://localhost:8080/api/exercises
+
+### Problème : Génération IA échoue
+
+**Vérifier llama.cpp** :
 ```bash
 # Windows PowerShell
 Invoke-WebRequest -Uri http://localhost:11435/health
@@ -305,29 +419,226 @@ Invoke-WebRequest -Uri http://localhost:11435/health
 curl http://localhost:11435/health
 ```
 
-### GPU 不工作
-1. **检查 CUDA 安装:**
-   ```bash
-   # Windows
-   nvidia-smi
-   
-   # Linux
-   nvidia-smi
-   ```
+**Si non accessible** :
+1. Vérifier que llama.cpp est démarré
+2. Vérifier le port (11435)
+3. Vérifier les logs pour les erreurs
 
-2. **检查 llama.cpp GPU 支持:**
-   - 确保下载了支持 CUDA 的版本
-   - 检查 `llama-cpp` 目录中是否有 `ggml-cuda.dll` (Windows) 或相关 CUDA 库
+### Problème : GPU ne fonctionne pas
 
-3. **降级到 CPU 模式:**
-   如果 GPU 有问题，可以手动启动纯 CPU 模式：
-   ```bash
-   # Windows
-   .\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
-   
-   # Linux/Mac
-   ./server -m models/deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
-   ```
+**NVIDIA GPU** :
+1. Vérifier CUDA : `nvidia-smi`
+2. Vérifier la présence de `ggml-cuda.dll` (Windows) ou `libggml-cuda.so` (Linux)
+3. Si problème, utiliser mode CPU : `-ngl 0`
+
+**Intel GPU** :
+1. Vérifier Vulkan : `vulkaninfo` (si installé)
+2. Si problème, utiliser mode CPU : `-ngl 0`
+
+**Solution universelle** : Utiliser le mode CPU pur
+```bash
+.\server.exe -m models\deepseek-coder-6.7b-instruct.Q2_K.gguf -ngl 0 -c 4096 --port 11435
+```
+
+### Problème : Erreur de compilation Java
+
+**Vérifier Java 25** :
+```bash
+java -version  # Doit afficher version 25
+echo $JAVA_HOME  # Doit pointer vers Java 25
+```
+
+**Si problème** :
+1. Réinstaller Java 25
+2. Reconfigurer `JAVA_HOME`
+3. Redémarrer le terminal
+
+---
+
+## 📚 Architecture du code
+
+### Structure du projet
+
+```
+ai-code-mentor-main/
+├── backend/                          # Backend Spring Boot
+│   ├── src/main/java/
+│   │   └── com/aicodementor/
+│   │       ├── controller/           # Contrôleurs REST API
+│   │       │   ├── ExerciseController.java
+│   │       │   ├── LLMController.java
+│   │       │   ├── SubmissionController.java
+│   │       │   ├── UserController.java
+│   │       │   └── StatsController.java
+│   │       ├── service/              # Logique métier
+│   │       │   ├── LLMService.java
+│   │       │   └── CodeExecutionService.java
+│   │       ├── entity/               # Entités JPA
+│   │       │   ├── Exercise.java
+│   │       │   ├── User.java
+│   │       │   ├── Submission.java
+│   │       │   └── KnowledgeBase.java
+│   │       ├── repository/           # Accès aux données
+│   │       ├── dto/                  # Objets de transfert
+│   │       └── config/               # Configuration
+│   │           ├── CorsConfig.java
+│   │           ├── GlobalExceptionHandler.java
+│   │           └── DataInitializer.java
+│   └── pom.xml
+├── src/                              # Frontend Vue.js
+│   ├── views/                        # Pages
+│   │   ├── Home.vue
+│   │   ├── CreateExercise.vue
+│   │   ├── ExerciseList.vue
+│   │   ├── ExerciseDetail.vue
+│   │   └── ExerciseTest.vue
+│   ├── components/                   # Composants réutilisables
+│   │   ├── CodeEditor.vue
+│   │   └── Navbar.vue
+│   ├── services/                     # Services API
+│   │   ├── api.js
+│   │   └── llmApi.js
+│   └── router/                       # Routage
+├── llama-cpp/                        # Binaires et modèles
+│   ├── server.exe / server           # Serveur llama.cpp
+│   └── models/
+│       └── deepseek-coder-6.7b-instruct.Q2_K.gguf
+├── start-all.bat / start-all.sh     # Scripts de démarrage
+└── package.json
+```
+
+### Flux de données
+
+```
+Frontend (Vue.js)
+    ↓ HTTP
+Backend (Spring Boot)
+    ↓ JPA
+Base de données (H2)
+    ↓
+Backend
+    ↓ HTTP
+llama.cpp (LLM local)
+```
+
+### API REST
+
+#### Exercices
+- `GET /api/exercises` - Liste paginée des exercices
+- `GET /api/exercises/{id}` - Détails d'un exercice
+- `POST /api/exercises` - Créer un exercice
+- `PUT /api/exercises/{id}` - Modifier un exercice
+- `DELETE /api/exercises/{id}` - Supprimer un exercice
+- `GET /api/exercises/published` - Exercices publiés
+
+#### LLM
+- `POST /api/llm/generate-exercise` - Générer un exercice
+- `POST /api/llm/save-exercise` - Sauvegarder un exercice généré
+- `POST /api/llm/execute-tests` - Exécuter des tests
+- `POST /api/llm/get-hint` - Obtenir un indice
+
+#### Soumissions
+- `GET /api/submissions` - Liste des soumissions
+- `POST /api/submissions` - Créer une soumission
+- `GET /api/submissions/user/{userId}` - Soumissions d'un utilisateur
+
+---
+
+## 🛡️ Gestion des exceptions
+
+Le projet utilise une gestion centralisée des exceptions via `GlobalExceptionHandler`.
+
+### Types d'exceptions gérées
+
+| Exception | Code HTTP | Usage |
+|-----------|-----------|-------|
+| `IllegalArgumentException` | 400 | Paramètres invalides |
+| `DataIntegrityViolationException` | 400 | Violation contraintes DB |
+| `ConstraintViolationException` | 400 | Erreur de validation |
+| `NoHandlerFoundException` | 404 | Endpoint non trouvé |
+| `Exception` | 500 | Erreur générique |
+
+### Bonnes pratiques
+
+✅ **À faire** :
+- Utiliser `logger.error()`, `logger.warn()` pour les logs
+- Types de retour explicites : `ResponseEntity<Page<Exercise>>`
+- Capturer des exceptions spécifiques
+- Laisser les exceptions remonter au `GlobalExceptionHandler`
+- Utiliser `@Transactional` pour les opérations DB
+
+❌ **À éviter** :
+- `printStackTrace()` ou `System.out.println()`
+- `ResponseEntity<?>` (type générique)
+- `catch (Exception e)` générique
+- Gérer manuellement chaque exception
+
+### Hibernate Lazy Loading
+
+**Problème** : Accès aux associations lazy après fermeture de transaction
+
+**Solution** : Précharger dans la transaction
+```java
+@Transactional(readOnly = true)
+public ResponseEntity<Page<Exercise>> getAllExercises(...) {
+    Page<Exercise> exercises = exerciseRepository.findAll(pageable);
+    
+    // Précharger avant la fin de la transaction
+    exercises.getContent().forEach(ex -> {
+        if (ex.getCreator() != null) {
+            Hibernate.initialize(ex.getCreator());
+            ex.getCreator().getId();
+        }
+    });
+    
+    return ResponseEntity.ok(exercises);
+}
+```
+
+---
+
+## 💻 Développement
+
+### Compilation
+
+**Backend** :
+```bash
+cd backend
+mvn clean compile
+```
+
+**Frontend** :
+```bash
+npm run build
+```
+
+### Tests
+
+**Backend** :
+```bash
+cd backend
+mvn test
+```
+
+### Base de données
+
+**Console H2** : http://localhost:8080/h2-console
+
+**Connexion** :
+- JDBC URL: `jdbc:h2:file:./data/testdb`
+- Username: `sa`
+- Password: `password`
+
+### Logs
+
+Les logs sont configurés dans `application.yml` :
+```yaml
+logging:
+  level:
+    com.aicodementor: DEBUG
+```
+
+---
 
 ## 📄 Licence
 
@@ -335,8 +646,11 @@ MIT License
 
 ## 🤝 Contribution
 
-Les Issues et Pull Requests sont les bienvenues !
+Les contributions sont les bienvenues ! N'hésitez pas à :
+- Ouvrir une Issue pour signaler un bug
+- Proposer une Pull Request
+- Améliorer la documentation
 
 ---
 
-**Commencer : Exécutez `.\start-all.bat` puis accédez à http://localhost:3000** 🎉
+**🚀 Pour commencer : Exécutez `.\start-all.bat` puis accédez à http://localhost:3000**
